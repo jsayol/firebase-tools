@@ -21,6 +21,8 @@ interface Message {
   payload: any;
 }
 
+export type WebSocketMessageType = "init" | "log" | "error";
+
 function isValidInitData(
   initData: WebSocketDebuggerInitData
 ): initData is WebSocketDebuggerInitData {
@@ -72,7 +74,7 @@ export class WebSocketDebugger {
     return (await this.init.promise).projectNumber;
   }
 
-  sendMessage(type: string, payload?: any): void {
+  sendMessage(type: WebSocketMessageType, payload?: any): void {
     const message: Message = { type, payload };
     try {
       this.client.send(JSON.stringify(message));

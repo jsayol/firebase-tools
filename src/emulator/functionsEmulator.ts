@@ -61,10 +61,7 @@ export class FunctionsEmulator implements EmulatorInstance {
       this.options.config.get("functions.source")
     );
 
-    const nodeBinary = await _getNodeBinary(
-      this.functionsDir,
-      wsInitData ? wsInitData.node : "prompt"
-    );
+    const nodeBinary = await _getNodeBinary(this.functionsDir, wsInitData && wsInitData.node);
 
     this.firebaseConfig = wsInitData
       ? wsInitData.firebaseConfig
