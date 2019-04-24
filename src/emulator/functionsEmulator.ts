@@ -18,6 +18,7 @@ import { spawnSync } from "child_process";
 import { FunctionsRuntimeBundle, getTriggersFromDirectory } from "./functionsEmulatorShared";
 import { EmulatorRegistry } from "./registry";
 import { EventEmitter } from "events";
+import { WebSocketDebuggerInitData } from "./websocketDebugger";
 
 const SERVICE_FIRESTORE = "firestore.googleapis.com";
 const SUPPORTED_SERVICES = [SERVICE_FIRESTORE];
@@ -49,7 +50,7 @@ export class FunctionsEmulator implements EmulatorInstance {
 
   constructor(private options: any, private args: FunctionsEmulatorArgs) {}
 
-  async start(): Promise<void> {
+  async start(wsInitData?: WebSocketDebuggerInitData): Promise<void> {
     if (this.args.port) {
       this.port = this.args.port;
     }
@@ -60,10 +61,15 @@ export class FunctionsEmulator implements EmulatorInstance {
       this.options.config.get("functions.source")
     );
 
-    const nodeBinary = await _askInstallNodeVersion(this.functionsDir);
+    const nodeBinary = await _getNodeBinary(
+      this.functionsDir,
+      wsInitData ? wsInitData.node.installIfMissing : "prompt"
+    );
 
-    // TODO: This call requires authentication, which we should remove eventually
-    this.firebaseConfig = await functionsConfig.getFirebaseConfig(this.options);
+    this.firebaseConfig = wsInitData
+      ? wsInitData.firebaseConfig
+      : // TODO: This call requires authentication, which we should remove eventually
+        await functionsConfig.getFirebaseConfig(this.options);
 
     const hub = express();
 
@@ -233,6 +239,14 @@ export class FunctionsEmulator implements EmulatorInstance {
 
     const runtime = InvokeRuntime(nodeBinary, runtimeBundle);
     runtime.events.on("log", this.logRuntimeEvent);
+
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      runtime.events.on("log", (log: EmulatorLog) => {
+        wsDebugger.sendMessage("log", log);
+      });
+    }
+
     return runtime;
   }
 
@@ -401,7 +415,7 @@ export function InvokeRuntime(
 /**
  * Returns the path to a "node" executable to use.
  */
-async function _askInstallNodeVersion(cwd: string): Promise<string> {
+async function _getNodeBinary(cwd: string, installOrPrompt: boolean | "prompt"): Promise<string> {
   const pkg = require(path.join(cwd, "package.json"));
 
   // If the developer hasn't specified a Node to use, inform them that it's an option and use default
@@ -445,20 +459,29 @@ async function _askInstallNodeVersion(cwd: string): Promise<string> {
   utils.logWarning(
     `Your requested "node" version "${requestedMajorVersion}" doesn't match your global version "${hostMajorVersion}"`
   );
-  utils.logBullet(
-    `We can install node@${requestedMajorVersion} to "node_modules" without impacting your global "node" install`
-  );
-  const response = await prompt({}, [
-    {
-      name: "node_install",
-      type: "confirm",
-      message: ` Would you like to setup Node ${requestedMajorVersion} for these functions?`,
-      default: true,
-    },
-  ]);
+
+  let install: boolean;
+
+  if (installOrPrompt === "prompt") {
+    utils.logBullet(
+      `We can install node@${requestedMajorVersion} to "node_modules" without impacting your global "node" install`
+    );
+    const response = await prompt({}, [
+      {
+        name: "node_install",
+        type: "confirm",
+        message: ` Would you like to setup Node ${requestedMajorVersion} for these functions?`,
+        default: true,
+      },
+    ]);
+
+    install = response.node_install;
+  } else {
+    install = installOrPrompt;
+  }
 
   // If they say yes, install their requested major version locally
-  if (response.node_install) {
+  if (install) {
     await spawnSync("npm", ["install", `node@${requestedMajorVersion}`, "--save-dev"], {
       cwd,
       stdio: "inherit",

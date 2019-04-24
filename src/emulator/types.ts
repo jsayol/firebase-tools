@@ -1,5 +1,7 @@
 /* tslint:disable:no-console */
 import { ChildProcess } from "child_process";
+import { WebSocketDebuggerInitData } from "./websocketDebugger";
+import { EmulatorRegistry } from "./registry";
 
 export const enum Emulators {
   FUNCTIONS = "functions",
@@ -9,7 +11,7 @@ export const enum Emulators {
 }
 
 export interface EmulatorInstance {
-  start(): Promise<void>; // Called to begin emulator process
+  start(wsInitData?: WebSocketDebuggerInitData): Promise<void>; // Called to begin emulator process
   connect(): Promise<void>; // Called once all sibling emulators are start()'d
   stop(): Promise<void>; // Called to kill emulator process
 }
@@ -73,13 +75,17 @@ export class EmulatorLog {
   }
 
   toString(): string {
-    return JSON.stringify({
+    return JSON.stringify(this.toJSON());
+  }
+
+  toJSON(): any {
+    return {
       timestamp: this.timestamp,
       level: this.level,
       text: this.text,
       data: this.data,
       type: this.type,
-    });
+    };
   }
 
   get date(): Date {
@@ -91,5 +97,10 @@ export class EmulatorLog {
 
   log(): void {
     process.stdout.write(`${this.toString()}\n`);
+
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      wsDebugger.sendMessage("log", this);
+    }
   }
 }

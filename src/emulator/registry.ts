@@ -1,4 +1,5 @@
 import { EmulatorInfo, EmulatorInstance, Emulators } from "./types";
+import { WebSocketDebugger } from "./websocketDebugger";
 
 export class EmulatorRegistry {
   static setInfo(emulator: Emulators, info: EmulatorInfo): void {
@@ -42,7 +43,18 @@ export class EmulatorRegistry {
 
     return info.port;
   }
+
+  static setWebSocketDebugger(wsDebugger: WebSocketDebugger): void {
+    EmulatorRegistry.WS_DEBUGGER = wsDebugger;
+  }
+
+  static getWebSocketDebugger(): WebSocketDebugger | void {
+    return EmulatorRegistry.WS_DEBUGGER;
+  }
+
   private static ALL = [Emulators.FUNCTIONS, Emulators.FIRESTORE, Emulators.DATABASE];
 
   private static INFO: Map<Emulators, EmulatorInfo> = new Map();
+
+  private static WS_DEBUGGER?: WebSocketDebugger;
 }

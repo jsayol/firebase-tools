@@ -19,6 +19,7 @@ import { FunctionsEmulator } from "../emulator/functionsEmulator";
 import { DatabaseEmulator } from "../emulator/databaseEmulator";
 import { FirestoreEmulator } from "../emulator/firestoreEmulator";
 import { HostingEmulator } from "../emulator/hostingEmulator";
+import { WebSocketDebuggerInitData } from "../emulator/websocketDebugger";
 
 // TODO: This should come from the enum
 const VALID_EMULATORS = ["database", "firestore", "functions", "hosting"];
@@ -62,7 +63,8 @@ async function waitForPortClosed(port: number): Promise<void> {
 async function startEmulator(
   name: Emulators,
   addr: Address,
-  instance: EmulatorInstance
+  instance: EmulatorInstance,
+  wsInitData?: WebSocketDebuggerInitData
 ): Promise<void> {
   // Log the command for analytics
   track("emulators:start", name);
@@ -87,7 +89,7 @@ async function startEmulator(
 
   // Start the emulator, wait for it to grab its port, and then mark it as started
   // in the registry.
-  await instance.start();
+  await instance.start(wsInitData);
   await waitForPortClosed(addr.port);
 
   const info: EmulatorInfo = {
@@ -170,7 +172,7 @@ async function runScript(script: string): Promise<void> {
   });
 }
 
-async function startAll(options: any): Promise<void> {
+async function startAll(options: any, wsInitData?: WebSocketDebuggerInitData): Promise<void> {
   // Emulators config is specified in firebase.json as:
   // "emulators": {
   //   "firestore": {
@@ -199,7 +201,7 @@ async function startAll(options: any): Promise<void> {
       host: functionsAddr.host,
       port: functionsAddr.port,
     });
-    await startEmulator(Emulators.FUNCTIONS, functionsAddr, functionsEmulator);
+    await startEmulator(Emulators.FUNCTIONS, functionsAddr, functionsEmulator, wsInitData);
   }
 
   if (targets.indexOf("firestore") > -1) {
@@ -249,8 +251,10 @@ async function startAll(options: any): Promise<void> {
 module.exports = new Command("emulators:start")
   .before(async (options: any) => {
     await requireConfig(options);
-    await requireAuth(options);
-    await getProjectNumber(options);
+    if (!options.ws) {
+      await requireAuth(options);
+      await getProjectNumber(options);
+    }
   })
   .description("start the local Firebase emulators")
   .option(
@@ -265,7 +269,14 @@ module.exports = new Command("emulators:start")
     "Run a specific testing script once the emulators have started up. " +
       "The command will start the emulators, run the script, and then exit."
   )
+  .option("--ws <string>", "[Experimental] Set this address as the emulators' WebSocket debugger.")
   .action(async (options: any) => {
+    if (options.ws) {
+      const { WebSocketDebugger } = await import("../emulator/websocketDebugger");
+      const ws = new WebSocketDebugger(options.ws);
+      options.projectNumber = await ws.getProjectNumber();
+    }
+
     try {
       await startAll(options);
     } catch (e) {
