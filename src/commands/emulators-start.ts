@@ -271,15 +271,19 @@ module.exports = new Command("emulators:start")
   )
   .option("--ws <string>", "[Experimental] Set this address as the emulators' WebSocket debugger.")
   .action(async (options: any) => {
+    let wsInitData: WebSocketDebuggerInitData | undefined;
+
     if (options.ws) {
       const { WebSocketDebugger } = await import("../emulator/websocketDebugger");
       const ws = new WebSocketDebugger(options.ws);
-      options.projectNumber = await ws.getProjectNumber();
+      wsInitData = await ws.getInitData();
+      options.projectNumber = wsInitData.projectNumber;
     }
 
     try {
-      await startAll(options);
+      await startAll(options, wsInitData);
     } catch (e) {
+      console.error(e);
       await cleanShutdown();
       throw e;
     }
