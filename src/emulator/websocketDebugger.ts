@@ -2,12 +2,18 @@ import * as WebSocket from "ws";
 import * as pkg from "../../package.json";
 
 export interface WebSocketDebuggerInitData {
-  path: string;
+  version: string;
+  projectPath: string;
   firebaseConfig: { [k: string]: any };
   projectNumber: string;
   node: {
+    useVersion?: string; // major version number
     installIfMissing: boolean;
   };
+}
+
+interface LocalInitData {
+  version: string;
 }
 
 interface Message {
@@ -19,7 +25,10 @@ function isValidInitData(
   initData: WebSocketDebuggerInitData
 ): initData is WebSocketDebuggerInitData {
   return (
-    typeof initData.path === "string" &&
+    typeof initData.version === "string" &&
+    typeof initData.projectPath === "string" &&
+    typeof initData.projectNumber === "string" &&
+    !!initData.firebaseConfig &&
     !!initData.node &&
     typeof initData.node.installIfMissing === "boolean"
   );
@@ -44,10 +53,10 @@ export class WebSocketDebugger {
     });
 
     this.client.on("open", () => {
-      const initPayload = {
+      const payload: LocalInitData = {
         version: pkg.version,
       };
-      this.sendMessage("init", initPayload);
+      this.sendMessage("init", payload);
     });
 
     this.client.on("message", (data: string) => {

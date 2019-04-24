@@ -63,7 +63,7 @@ export class FunctionsEmulator implements EmulatorInstance {
 
     const nodeBinary = await _getNodeBinary(
       this.functionsDir,
-      wsInitData ? wsInitData.node.installIfMissing : "prompt"
+      wsInitData ? wsInitData.node : "prompt"
     );
 
     this.firebaseConfig = wsInitData
@@ -415,20 +415,30 @@ export function InvokeRuntime(
 /**
  * Returns the path to a "node" executable to use.
  */
-async function _getNodeBinary(cwd: string, installOrPrompt: boolean | "prompt"): Promise<string> {
-  const pkg = require(path.join(cwd, "package.json"));
+async function _getNodeBinary(
+  cwd: string,
+  nodeOptions?: WebSocketDebuggerInitData["node"]
+): Promise<string> {
+  let requestedMajorVersion: string;
 
-  // If the developer hasn't specified a Node to use, inform them that it's an option and use default
-  if (!pkg.engines || !pkg.engines.node) {
-    utils.logWarning(
-      "Your functions directory does not specify a Node version. " +
-        "Learn more https://firebase.google.com/docs/functions/manage-functions#set_runtime_options"
-    );
-    return process.execPath;
+  if (nodeOptions && nodeOptions.useVersion) {
+    requestedMajorVersion = nodeOptions.useVersion;
+  } else {
+    const pkg = require(path.join(cwd, "package.json"));
+
+    // If the developer hasn't specified a Node to use, inform them that it's an option and use default
+    if (!pkg.engines || !pkg.engines.node) {
+      utils.logWarning(
+        "Your functions directory does not specify a Node version. " +
+          "Learn more https://firebase.google.com/docs/functions/manage-functions#set_runtime_options"
+      );
+      return process.execPath;
+    }
+
+    requestedMajorVersion = pkg.engines.node;
   }
 
   const hostMajorVersion = process.versions.node.split(".")[0];
-  const requestedMajorVersion = pkg.engines.node;
   let localMajorVersion = "0";
   const localNodePath = path.join(cwd, "node_modules/.bin/node");
 
@@ -462,7 +472,9 @@ async function _getNodeBinary(cwd: string, installOrPrompt: boolean | "prompt"):
 
   let install: boolean;
 
-  if (installOrPrompt === "prompt") {
+  if (nodeOptions) {
+    install = nodeOptions.installIfMissing;
+  } else {
     utils.logBullet(
       `We can install node@${requestedMajorVersion} to "node_modules" without impacting your global "node" install`
     );
@@ -476,8 +488,6 @@ async function _getNodeBinary(cwd: string, installOrPrompt: boolean | "prompt"):
     ]);
 
     install = response.node_install;
-  } else {
-    install = installOrPrompt;
   }
 
   // If they say yes, install their requested major version locally
