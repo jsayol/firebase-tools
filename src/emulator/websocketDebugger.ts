@@ -24,7 +24,7 @@ interface Message {
 }
 
 type SendMessageType = "init" | "log" | "error" | "stdout" | "stderr";
-type RecvMessageType = "init" | "error";
+type RecvMessageType = "init" | "stop" | "error";
 
 function isValidInitData(
   initData: WebSocketDebuggerInitData
@@ -44,6 +44,7 @@ export class WebSocketDebugger {
   private client: WebSocket;
   private stdoutWrite?: typeof process.stdout._write;
   private stderrWrite?: typeof process.stderr._write;
+  private onStopCallback?: (...args: any[]) => any;
 
   private init: {
     promise: Promise<WebSocketDebuggerInitData>;
@@ -161,6 +162,16 @@ export class WebSocketDebugger {
     }
   }
 
+  onStop(callback: (...args: any[]) => any): void {
+    this.onStopCallback = callback;
+  }
+
+  private async stop(): Promise<void> {
+    if (this.onStopCallback) {
+      await this.onStopCallback();
+    }
+  }
+
   private processMessage(message: { type: RecvMessageType; payload: any }): void {
     const { type, payload } = message;
 
@@ -171,6 +182,9 @@ export class WebSocketDebugger {
         } else {
           this.terminate();
         }
+        break;
+      case "stop":
+        this.stop();
         break;
       case "error":
         console.error(payload);

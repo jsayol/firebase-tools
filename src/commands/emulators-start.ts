@@ -19,7 +19,7 @@ import { FunctionsEmulator } from "../emulator/functionsEmulator";
 import { DatabaseEmulator } from "../emulator/databaseEmulator";
 import { FirestoreEmulator } from "../emulator/firestoreEmulator";
 import { HostingEmulator } from "../emulator/hostingEmulator";
-import { WebSocketDebuggerInitData } from "../emulator/websocketDebugger";
+import { WebSocketDebugger, WebSocketDebuggerInitData } from "../emulator/websocketDebugger";
 
 // TODO: This should come from the enum
 const VALID_EMULATORS = ["database", "firestore", "functions", "hosting"];
@@ -271,12 +271,12 @@ module.exports = new Command("emulators:start")
   )
   .option("--ws <string>", "[Experimental] Set this address as the emulators' WebSocket debugger.")
   .action(async (options: any) => {
+    let wsDebugger: WebSocketDebugger | undefined;
     let wsInitData: WebSocketDebuggerInitData | undefined;
 
     if (options.ws) {
-      const { WebSocketDebugger } = await import("../emulator/websocketDebugger");
-      const ws = new WebSocketDebugger(options.ws);
-      wsInitData = await ws.getInitData();
+      wsDebugger = new WebSocketDebugger(options.ws);
+      wsInitData = await wsDebugger.getInitData();
       options.projectNumber = wsInitData.projectNumber;
     }
 
@@ -296,12 +296,27 @@ module.exports = new Command("emulators:start")
         .catch(cleanShutdown);
     }
 
+    const stopConditions: Array<Promise<any>> = [];
+
     // Hang until explicitly killed
-    await new Promise((res, rej) => {
-      process.on("SIGINT", () => {
-        cleanShutdown()
-          .then(res)
-          .catch(res);
-      });
-    });
+    stopConditions.push(
+      new Promise((res, rej) => {
+        process.on("SIGINT", () => {
+          cleanShutdown()
+            .then(res)
+            .catch(res);
+        });
+      })
+    );
+
+    if (options.ws && wsDebugger) {
+      stopConditions.push(
+        new Promise((resolve) => {
+          wsDebugger!.onStop(async () => {
+            await cleanShutdown();
+            resolve();
+          });
+        })
+      );
+    }
   });
