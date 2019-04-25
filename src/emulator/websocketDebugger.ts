@@ -2,8 +2,10 @@ import * as WebSocket from "ws";
 import * as pkg from "../../package.json";
 
 export interface WebSocketDebuggerInitData {
-  version: string;
-  projectPath: string;
+  client: {
+    name: string;
+    version: string;
+  };
   firebaseConfig: { [k: string]: any };
   projectNumber: string;
   node: {
@@ -28,8 +30,9 @@ function isValidInitData(
   initData: WebSocketDebuggerInitData
 ): initData is WebSocketDebuggerInitData {
   return (
-    typeof initData.version === "string" &&
-    typeof initData.projectPath === "string" &&
+    initData.client &&
+    typeof initData.client.name === "string" &&
+    typeof initData.client.version === "string" &&
     typeof initData.projectNumber === "string" &&
     !!initData.firebaseConfig &&
     !!initData.node &&
