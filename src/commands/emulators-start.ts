@@ -276,6 +276,7 @@ module.exports = new Command("emulators:start")
 
     if (options.ws) {
       wsDebugger = new WebSocketDebugger(options.ws);
+      EmulatorRegistry.setWebSocketDebugger(wsDebugger);
       wsInitData = await wsDebugger.getInitData();
       options.projectNumber = wsInitData.projectNumber;
     }
