@@ -310,6 +310,7 @@ module.exports = new Command("emulators:start")
     );
 
     if (options.ws && wsDebugger) {
+      // Hang until told to stop
       stopConditions.push(
         new Promise((resolve) => {
           wsDebugger!.onStop(async () => {
@@ -319,4 +320,6 @@ module.exports = new Command("emulators:start")
         })
       );
     }
+
+    await Promise.race(stopConditions);
   });
