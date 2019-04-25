@@ -253,7 +253,8 @@ export class FunctionsEmulator implements EmulatorInstance {
         // Ignore these for now...
         break;
       case "USER":
-        logger.info(`${clc.blackBright("> ")} ${log.text}`);
+        // TODO(jsayol): uncomment this
+        // logger.info(`${clc.blackBright("> ")} ${log.text}`);
         break;
       case "DEBUG":
         logger.debug(log.text);
@@ -261,6 +262,7 @@ export class FunctionsEmulator implements EmulatorInstance {
       case "INFO":
         utils.logLabeledBullet("functions", log.text);
       default:
+        // TODO(jsayol): uncomment this
         logger.info(`${log.level}: ${log.text}`);
         break;
     }

@@ -283,7 +283,6 @@ module.exports = new Command("emulators:start")
     try {
       await startAll(options, wsInitData);
     } catch (e) {
-      console.error(e);
       await cleanShutdown();
       throw e;
     }

@@ -1,5 +1,8 @@
+import * as path from "path";
 import * as WebSocket from "ws";
-import * as pkg from "../../package.json";
+
+// tslint:disable-next-line: no-var-requires
+const pkg = require(path.resolve(__dirname, "..", "..", "package.json"));
 
 export interface WebSocketDebuggerInitData {
   client: {
