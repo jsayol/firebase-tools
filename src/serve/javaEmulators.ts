@@ -14,7 +14,7 @@ import * as fs from "fs-extra";
 import * as path from "path";
 import * as os from "os";
 
-const EMULATOR_INSTANCE_KILL_TIMEOUT = 2000; /* ms */
+const EMULATOR_INSTANCE_KILL_TIMEOUT = 10000; /* ms */
 
 type JavaEmulators = Emulators.FIRESTORE | Emulators.DATABASE;
 
@@ -124,6 +124,14 @@ async function _runBinary(
 
     const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
     if (wsDebugger) {
+      const { instance, stdout, ...emulatorDetails } = emulator;
+
+      wsDebugger.sendMessage("pid", {
+        pid: emulator.instance.pid,
+        emulator: emulatorDetails,
+        command,
+      });
+
       emulator.instance.stdout.on("data", async (data) => {
         if (data instanceof Buffer) {
           data = data.toString();
@@ -134,6 +142,7 @@ async function _runBinary(
           data,
         });
       });
+
       emulator.instance.stderr.on("data", async (data) => {
         if (data instanceof Buffer) {
           data = data.toString();

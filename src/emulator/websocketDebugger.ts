@@ -26,7 +26,7 @@ interface Message {
   payload: any;
 }
 
-type SendMessageType = "init" | "log" | "error" | "stdout" | "stderr";
+type SendMessageType = "init" | "log" | "error" | "stdout" | "stderr" | "pid";
 type RecvMessageType = "init" | "stop" | "error";
 
 function isValidInitData(
