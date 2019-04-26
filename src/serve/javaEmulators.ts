@@ -1,6 +1,7 @@
 "use strict";
 
 import { Emulators, JavaEmulatorCommand, JavaEmulatorDetails } from "../emulator/types";
+import { EmulatorRegistry } from "../emulator/registry";
 import { Constants } from "../emulator/constants";
 
 import * as FirebaseError from "../error";
@@ -120,6 +121,24 @@ async function _runBinary(
       emulator.stdout.write(data.toString());
       utils.logWarning(emulator.name + ": " + data.toString());
     });
+
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      emulator.instance.stdout.on("data", (data) => {
+        wsDebugger.sendMessage("log", {
+          module: emulator.name,
+          from: "stdout",
+          data,
+        });
+      });
+      emulator.instance.stderr.on("data", (data) => {
+        wsDebugger.sendMessage("log", {
+          module: emulator.name,
+          from: "stderr",
+          data,
+        });
+      });
+    }
 
     emulator.instance.on("error", (err: any) => {
       if (err.path === "java" && err.code === "ENOENT") {
