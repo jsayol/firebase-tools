@@ -64,14 +64,14 @@ export class WebSocketDebugger {
       this.init.reject = reject;
     });
 
-    this.client.on("open", () => {
+    this.client.on("open", async () => {
       const payload: LocalInitData = {
         version: pkg.version,
       };
-      this.sendMessage("init", payload);
+      await this.sendMessage("init", payload);
     });
 
-    this.client.on("message", (data: string) => {
+    this.client.on("message", async (data: string) => {
       let message: any;
 
       try {
@@ -79,16 +79,22 @@ export class WebSocketDebugger {
       } catch (err) {
         // Couldn't parse the message sent by the server... exTERMINATE!
         // (You have to read that last part with a Dalek voice or it won't be funny)
-        this.sendMessage("error", { error: err.message, data });
+        await this.sendMessage("error", { error: err.message, data });
         this.terminate();
         return;
       }
 
-      this.processMessage(message);
+      await this.processMessage(message);
     });
 
     this.stdoutCapture();
     this.stderrCapture();
+
+    // Close the connection on an unhandled rejection
+    process.on("unhandledRejection", async (reason) => {
+      await this.sendMessage("error", { error: "unhandledRejection", data: reason });
+      this.terminate();
+    });
   }
 
   getInitData(): Promise<WebSocketDebuggerInitData> {
@@ -103,13 +109,21 @@ export class WebSocketDebugger {
     return (await this.getInitData()).projectNumber;
   }
 
-  sendMessage(type: SendMessageType, payload?: any): void {
-    const message: Message = { type, payload };
-    try {
-      this.client.send(JSON.stringify(message));
-    } catch (err) {
-      this.terminate();
-    }
+  sendMessage(type: SendMessageType, payload?: any): Promise<void> {
+    return new Promise((resolve) => {
+      const message: Message = { type, payload };
+      try {
+        this.client.send(JSON.stringify(message), (err?: any) => {
+          resolve();
+          if (err) {
+            this.terminate();
+          }
+        });
+      } catch (err) {
+        resolve();
+        this.terminate();
+      }
+    });
   }
 
   terminate(): void {
@@ -125,7 +139,7 @@ export class WebSocketDebugger {
 
       process.stdout._write = async (data, encoding, done) => {
         await this.init.promise;
-        this.sendMessage("stdout", { data, encoding });
+        await this.sendMessage("stdout", { data, encoding });
         if (silent) {
           done();
         } else {
@@ -141,7 +155,7 @@ export class WebSocketDebugger {
 
       process.stderr._write = async (data, encoding, done) => {
         await this.init.promise;
-        this.sendMessage("stderr", { data, encoding });
+        await this.sendMessage("stderr", { data, encoding });
         if (silent) {
           done();
         } else {
@@ -175,7 +189,7 @@ export class WebSocketDebugger {
     }
   }
 
-  private processMessage(message: { type: RecvMessageType; payload: any }): void {
+  private async processMessage(message: { type: RecvMessageType; payload: any }): Promise<void> {
     const { type, payload } = message;
 
     switch (type) {
@@ -193,7 +207,7 @@ export class WebSocketDebugger {
         console.error(payload);
         break;
       default:
-        this.sendMessage("error", `Unknown message type "${type}"`);
+        await this.sendMessage("error", `Unknown message type "${type}"`);
         this.terminate();
     }
   }

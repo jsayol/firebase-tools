@@ -239,8 +239,8 @@ export class FunctionsEmulator implements EmulatorInstance {
 
     const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
     if (wsDebugger) {
-      runtime.events.on("log", (log: EmulatorLog) => {
-        wsDebugger.sendMessage("log", { module: "functions", mode, log });
+      runtime.events.on("log", async (log: EmulatorLog) => {
+        await wsDebugger.sendMessage("log", { module: "functions", mode, log });
       });
     }
 

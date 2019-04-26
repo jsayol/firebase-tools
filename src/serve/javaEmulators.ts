@@ -124,15 +124,21 @@ async function _runBinary(
 
     const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
     if (wsDebugger) {
-      emulator.instance.stdout.on("data", (data) => {
-        wsDebugger.sendMessage("log", {
+      emulator.instance.stdout.on("data", async (data) => {
+        if (data instanceof Buffer) {
+          data = data.toString();
+        }
+        await wsDebugger.sendMessage("log", {
           module: emulator.name,
           from: "stdout",
           data,
         });
       });
-      emulator.instance.stderr.on("data", (data) => {
-        wsDebugger.sendMessage("log", {
+      emulator.instance.stderr.on("data", async (data) => {
+        if (data instanceof Buffer) {
+          data = data.toString();
+        }
+        await wsDebugger.sendMessage("log", {
           module: emulator.name,
           from: "stderr",
           data,
