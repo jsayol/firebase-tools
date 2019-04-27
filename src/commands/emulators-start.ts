@@ -21,6 +21,9 @@ import { FirestoreEmulator } from "../emulator/firestoreEmulator";
 import { HostingEmulator } from "../emulator/hostingEmulator";
 import { WebSocketDebugger, WebSocketDebuggerInitData } from "../emulator/websocketDebugger";
 
+// tslint:disable-next-line: no-var-requires
+const terminate = require("terminate");
+
 // TODO: This should come from the enum
 const VALID_EMULATORS = ["database", "firestore", "functions", "hosting"];
 
@@ -84,6 +87,12 @@ async function startEmulator(
     }`);
 
     await cleanShutdown();
+
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      await wsDebugger.sendMessage("emulator-port-taken", { name, addr });
+    }
+
     return utils.reject(`Could not start ${name} emulator, port taken.`, {});
   }
 
@@ -322,4 +331,9 @@ module.exports = new Command("emulators:start")
     }
 
     await Promise.race(stopConditions);
+
+    // This kills the current process and any dangling spawned child processes.
+    return new Promise((resolve) => {
+      terminate(process.pid, resolve);
+    });
   });

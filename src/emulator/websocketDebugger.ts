@@ -26,8 +26,15 @@ interface Message {
   payload: any;
 }
 
-type SendMessageType = "init" | "log" | "error" | "stdout" | "stderr" | "pid";
 type RecvMessageType = "init" | "stop" | "error";
+type SendMessageType =
+  | "init"
+  | "log"
+  | "error"
+  | "stdout"
+  | "stderr"
+  | "pid"
+  | "emulator-port-taken";
 
 function isValidInitData(
   initData: WebSocketDebuggerInitData
