@@ -305,32 +305,14 @@ module.exports = new Command("emulators:start")
         .catch(cleanShutdown);
     }
 
-    const stopConditions: Array<Promise<any>> = [];
-
     // Hang until explicitly killed
-    stopConditions.push(
-      new Promise((res, rej) => {
-        process.on("SIGINT", () => {
-          cleanShutdown()
-            .then(res)
-            .catch(res);
-        });
-      })
-    );
-
-    if (options.ws && wsDebugger) {
-      // Hang until told to stop
-      stopConditions.push(
-        new Promise((resolve) => {
-          wsDebugger!.onStop(async () => {
-            await cleanShutdown();
-            resolve();
-          });
-        })
-      );
-    }
-
-    await Promise.race(stopConditions);
+    await new Promise((res, rej) => {
+      process.on("SIGINT", () => {
+        cleanShutdown()
+          .then(res)
+          .catch(res);
+      });
+    });
 
     // This kills the current process and any dangling spawned child processes.
     return new Promise((resolve) => {

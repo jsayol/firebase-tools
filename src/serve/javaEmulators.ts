@@ -14,7 +14,7 @@ import * as fs from "fs-extra";
 import * as path from "path";
 import * as os from "os";
 
-const EMULATOR_INSTANCE_KILL_TIMEOUT = 10000; /* ms */
+const EMULATOR_INSTANCE_KILL_TIMEOUT = 2000; /* ms */
 
 type JavaEmulators = Emulators.FIRESTORE | Emulators.DATABASE;
 
@@ -112,16 +112,6 @@ async function _runBinary(
 
     utils.logLabeledBullet(emulator.name, `Logging to ${clc.bold(_getLogFileName(emulator.name))}`);
 
-    emulator.instance.stdout.on("data", (data) => {
-      // TODO: Enable this if --debug is passed
-      // process.stdout.write(data.toString());
-      emulator.stdout.write(data.toString());
-    });
-    emulator.instance.stderr.on("data", (data) => {
-      emulator.stdout.write(data.toString());
-      utils.logWarning(emulator.name + ": " + data.toString());
-    });
-
     const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
     if (wsDebugger) {
       const { instance, stdout, ...emulatorDetails } = emulator;
@@ -152,6 +142,16 @@ async function _runBinary(
           from: "stderr",
           data,
         });
+      });
+    } else {
+      emulator.instance.stdout.on("data", (data) => {
+        // TODO: Enable this if --debug is passed
+        // process.stdout.write(data.toString());
+        emulator.stdout.write(data.toString());
+      });
+      emulator.instance.stderr.on("data", (data) => {
+        emulator.stdout.write(data.toString());
+        utils.logWarning(emulator.name + ": " + data.toString());
       });
     }
 
