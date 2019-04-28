@@ -136,17 +136,17 @@ export class WebSocketDebugger {
   terminate(): void {
     this.client.terminate();
     this.init.reject();
-
     // TODO(jsayol): notify somewhere?
   }
 
   stdoutCapture(silent = true): void {
     if (!this.stdoutWrite) {
+      // tslint:disable-next-line: prefer-const
+      let buffered = "";
       this.stdoutWrite = process.stdout._write;
 
-      process.stdout._write = async (data, encoding, done) => {
-        await this.init.promise;
-        await this.sendMessage("stdout", { data, encoding });
+      process.stdout._write = async (chunk, encoding, done) => {
+        await this.processOutput("stdout", buffered, chunk);
         if (silent) {
           done();
         } else {
@@ -158,11 +158,12 @@ export class WebSocketDebugger {
 
   stderrCapture(silent = true): void {
     if (!this.stderrWrite) {
+      // tslint:disable-next-line: prefer-const
+      let buffered = "";
       this.stderrWrite = process.stderr._write;
 
-      process.stderr._write = async (data, encoding, done) => {
-        await this.init.promise;
-        await this.sendMessage("stderr", { data, encoding });
+      process.stderr._write = async (chunk, encoding, done) => {
+        await this.processOutput("stderr", buffered, chunk);
         if (silent) {
           done();
         } else {
@@ -188,6 +189,24 @@ export class WebSocketDebugger {
 
   onStop(callback: (...args: any[]) => any): void {
     this.onStopCallback = callback;
+  }
+
+  private async processOutput(
+    from: "stdout" | "stderr",
+    buffered: string,
+    chunk: string
+  ): Promise<void> {
+    buffered += chunk;
+    let eolIndex = buffered.indexOf("\n");
+
+    while (eolIndex >= 0) {
+      // `line` includes a newline at the end
+      const line = buffered.slice(0, eolIndex + 1);
+      await this.init.promise;
+      await this.sendMessage(from, line);
+      buffered = buffered.slice(eolIndex + 1);
+      eolIndex = buffered.indexOf("\n");
+    }
   }
 
   private async stop(): Promise<void> {
