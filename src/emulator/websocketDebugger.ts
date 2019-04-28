@@ -62,6 +62,11 @@ export class WebSocketDebugger {
     reject: (reason?: any) => void;
   };
 
+  private buffered: { stdout: string; stderr: string } = {
+    stdout: "",
+    stderr: "",
+  };
+
   constructor(address: string) {
     this.client = new WebSocket(address);
 
@@ -141,12 +146,10 @@ export class WebSocketDebugger {
 
   stdoutCapture(silent = true): void {
     if (!this.stdoutWrite) {
-      // tslint:disable-next-line: prefer-const
-      let buffered = "";
       this.stdoutWrite = process.stdout._write;
 
       process.stdout._write = async (chunk, encoding, done) => {
-        await this.processOutput("stdout", buffered, chunk);
+        await this.processOutput("stdout", chunk);
         if (silent) {
           done();
         } else {
@@ -158,12 +161,10 @@ export class WebSocketDebugger {
 
   stderrCapture(silent = true): void {
     if (!this.stderrWrite) {
-      // tslint:disable-next-line: prefer-const
-      let buffered = "";
       this.stderrWrite = process.stderr._write;
 
       process.stderr._write = async (chunk, encoding, done) => {
-        await this.processOutput("stderr", buffered, chunk);
+        await this.processOutput("stderr", chunk);
         if (silent) {
           done();
         } else {
@@ -191,21 +192,17 @@ export class WebSocketDebugger {
     this.onStopCallback = callback;
   }
 
-  private async processOutput(
-    from: "stdout" | "stderr",
-    buffered: string,
-    chunk: string
-  ): Promise<void> {
-    buffered += chunk;
-    let eolIndex = buffered.indexOf("\n");
+  private async processOutput(from: "stdout" | "stderr", chunk: string): Promise<void> {
+    this.buffered[from] += chunk;
+    let newlineIndex = this.buffered[from].indexOf("\n");
 
-    while (eolIndex >= 0) {
+    while (newlineIndex >= 0) {
       // `line` includes a newline at the end
-      const line = buffered.slice(0, eolIndex + 1);
+      const line = this.buffered[from].slice(0, newlineIndex + 1);
       await this.init.promise;
       await this.sendMessage(from, line);
-      buffered = buffered.slice(eolIndex + 1);
-      eolIndex = buffered.indexOf("\n");
+      this.buffered[from] = this.buffered[from].slice(newlineIndex + 1);
+      newlineIndex = this.buffered[from].indexOf("\n");
     }
   }
 
