@@ -1,5 +1,6 @@
 import * as path from "path";
 import * as WebSocket from "ws";
+import { EventEmitter } from "events";
 
 // tslint:disable-next-line: no-var-requires
 const pkg = require(path.resolve(__dirname, "..", "..", "package.json"));
@@ -26,7 +27,7 @@ interface Message {
   payload: any;
 }
 
-type RecvMessageType = "init" | "stop" | "error";
+type RecvMessageType = "init" | "stop" | "error" | "web-config";
 type SendMessageType =
   | "init"
   | "log"
@@ -34,7 +35,8 @@ type SendMessageType =
   | "stdout"
   | "stderr"
   | "pid"
-  | "emulator-port-taken";
+  | "emulator-port-taken"
+  | "get-web-config";
 
 function isValidInitData(
   initData: WebSocketDebuggerInitData
@@ -50,11 +52,11 @@ function isValidInitData(
   );
 }
 
-export class WebSocketDebugger {
+export class WebSocketDebugger extends EventEmitter {
   private client: WebSocket;
   private stdoutWrite?: typeof process.stdout._write;
   private stderrWrite?: typeof process.stderr._write;
-  private onStopCallback?: (...args: any[]) => any;
+  private webAppConfig?: { [k: string]: any };
 
   private init: {
     promise: Promise<WebSocketDebuggerInitData>;
@@ -68,6 +70,7 @@ export class WebSocketDebugger {
   };
 
   constructor(address: string) {
+    super();
     this.client = new WebSocket(address);
 
     this.init = {} as any;
@@ -119,6 +122,25 @@ export class WebSocketDebugger {
 
   async getProjectNumber(): Promise<string> {
     return (await this.getInitData()).projectNumber;
+  }
+
+  async getWebAppConfig(): Promise<{ [k: string]: any }> {
+    if (this.webAppConfig) {
+      return this.webAppConfig;
+    }
+
+    return new Promise(async (resolve, reject) => {
+      this.once("error", reject);
+      this.once("web-config", (config) => {
+        resolve(config);
+        this.removeListener("error", reject);
+      });
+      try {
+        await this.sendMessage("get-web-config");
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 
   sendMessage(type: SendMessageType, payload?: any): Promise<void> {
@@ -188,10 +210,6 @@ export class WebSocketDebugger {
     }
   }
 
-  onStop(callback: (...args: any[]) => any): void {
-    this.onStopCallback = callback;
-  }
-
   private async processOutput(from: "stdout" | "stderr", chunk: string): Promise<void> {
     this.buffered[from] += chunk;
     let newlineIndex = this.buffered[from].indexOf("\n");
@@ -206,14 +224,9 @@ export class WebSocketDebugger {
     }
   }
 
-  private async stop(): Promise<void> {
-    if (this.onStopCallback) {
-      await this.onStopCallback();
-    }
-  }
-
   private async processMessage(message: { type: RecvMessageType; payload: any }): Promise<void> {
     const { type, payload } = message;
+    let isValidMessage = true;
 
     switch (type) {
       case "init":
@@ -224,14 +237,22 @@ export class WebSocketDebugger {
         }
         break;
       case "stop":
-        this.stop();
+        // TODO: not sure if we need to do anything here.
+        break;
+      case "web-config":
+        this.webAppConfig = payload;
         break;
       case "error":
         console.error(payload);
         break;
       default:
+        isValidMessage = false;
         await this.sendMessage("error", `Unknown message type "${type}"`);
         this.terminate();
+    }
+
+    if (isValidMessage) {
+      this.emit(type, payload);
     }
   }
 }

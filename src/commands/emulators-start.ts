@@ -238,6 +238,11 @@ async function startAll(options: any, wsInitData?: WebSocketDebuggerInitData): P
   }
 
   if (targets.indexOf("hosting") > -1) {
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      options.webAppConfig = await wsDebugger.getWebAppConfig();
+    }
+
     const hostingAddr = Constants.getAddress(Emulators.HOSTING, options);
     const hostingEmulator = new HostingEmulator({
       host: hostingAddr.host,
