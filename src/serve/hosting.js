@@ -17,10 +17,9 @@ var _attempts = 0;
 var server;
 
 function _startServer(options, config, port, init) {
-  // TODO(jsayol): figure out how to capture logging from `superstatic`
-  // (it will probably involve making changes to the package)
   server = superstatic({
     debug: true,
+    debugStream: options.debugStream,
     port: port,
     host: options.host,
     config: config,

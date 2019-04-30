@@ -3,6 +3,7 @@
 import * as childProcess from "child_process";
 import * as clc from "cli-color";
 import * as pf from "portfinder";
+import * as stream from "stream";
 
 import getProjectNumber = require("../getProjectNumber");
 import * as Command from "../command";
@@ -238,16 +239,47 @@ async function startAll(options: any, wsInitData?: WebSocketDebuggerInitData): P
   }
 
   if (targets.indexOf("hosting") > -1) {
+    let hostingOptions = options;
+
     const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
     if (wsDebugger) {
       options.webAppConfig = await wsDebugger.getWebAppConfig();
+
+      let buffered = "";
+      const debugStream = new stream.Writable();
+      debugStream._write = async (
+        chunk: any,
+        encoding: string,
+        done: (error?: Error | null) => void
+      ): Promise<void> => {
+        buffered += chunk.toString();
+        let newlineIndex = buffered.indexOf("\n");
+
+        while (newlineIndex >= 0) {
+          // `line` includes a newline at the end
+          const line = buffered.slice(0, newlineIndex + 1);
+          await wsDebugger.sendMessage("log", {
+            module: "hosting",
+            line,
+          });
+          buffered = buffered.slice(newlineIndex + 1);
+          newlineIndex = buffered.indexOf("\n");
+        }
+
+        done();
+      };
+
+      hostingOptions = {
+        ...hostingOptions,
+        debugStream,
+      };
     }
 
     const hostingAddr = Constants.getAddress(Emulators.HOSTING, options);
     const hostingEmulator = new HostingEmulator({
       host: hostingAddr.host,
       port: hostingAddr.port,
-      options,
+      options: hostingOptions,
     });
 
     await startEmulator(Emulators.HOSTING, hostingAddr, hostingEmulator);
