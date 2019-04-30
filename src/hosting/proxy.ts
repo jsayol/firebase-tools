@@ -3,6 +3,7 @@ import { Request, RequestHandler, Response } from "express";
 import * as request from "request";
 
 import * as logger from "../logger";
+import * as utils from "../utils";
 
 const REQUIRED_VARY_VALUES = ["Accept-Encoding", "Authorization", "Cookie"];
 
@@ -36,7 +37,8 @@ function makeVary(vary?: string): string {
  */
 export function proxyRequestHandler(url: string, rewriteIdentifier: string): RequestHandler {
   return (req: Request, res: Response, next: () => void): any => {
-    logger.info(`[hosting] Rewriting ${req.url} to ${url} for ${rewriteIdentifier}`);
+    utils.logLabeledBullet("hosting", `Rewriting ${req.url} to ${url} for ${rewriteIdentifier}`);
+
     // Extract the __session cookie from headers to forward it to the
     // functions cookie is not a string[].
     const cookie = (req.headers.cookie as string) || "";

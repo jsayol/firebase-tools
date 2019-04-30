@@ -52,6 +52,10 @@ export class EmulatorRegistry {
     return EmulatorRegistry.WS_DEBUGGER;
   }
 
+  static hasWebSocketDebugger(): boolean {
+    return EmulatorRegistry.WS_DEBUGGER !== undefined;
+  }
+
   private static ALL = [Emulators.FUNCTIONS, Emulators.FIRESTORE, Emulators.DATABASE];
 
   private static INFO: Map<Emulators, EmulatorInfo> = new Map();

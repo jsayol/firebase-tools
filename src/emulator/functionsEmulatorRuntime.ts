@@ -551,6 +551,7 @@ async function main(): Promise<void> {
   if (enhancedLogs) {
     new EmulatorLog("INFO", "runtime-status", `Function ${frb.triggerId} started.`, {
       triggerId: frb.triggerId,
+      skipStdout: true,
     }).log();
   }
 
@@ -594,7 +595,7 @@ async function main(): Promise<void> {
     "INFO",
     "runtime-status",
     `Function ${frb.triggerId} finished in ${duration} ms.`,
-    enhancedLogs ? { triggerId: frb.triggerId } : undefined
+    enhancedLogs ? { triggerId: frb.triggerId, skipStdout: true } : undefined
   ).log();
 }
 

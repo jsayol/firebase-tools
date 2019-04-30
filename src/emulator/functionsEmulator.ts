@@ -242,7 +242,12 @@ export class FunctionsEmulator implements EmulatorInstance {
     }
 
     const runtime = InvokeRuntime(nodeBinary, runtimeBundle, runtimeOptions);
-    runtime.events.on("log", this.logRuntimeEvent);
+    runtime.events.on("log", (log: EmulatorLog) => {
+      if (wsDebugger && log.data && log.data.skipStdout) {
+        return;
+      }
+      this.logRuntimeEvent(log);
+    });
 
     if (wsDebugger) {
       runtime.events.on("log", (log: EmulatorLog) => {
@@ -316,12 +321,14 @@ export class FunctionsEmulator implements EmulatorInstance {
     }
 
     const bundle = JSON.stringify({ eventTrigger: trigger.definition.eventTrigger });
-    utils.logLabeledBullet("functions", `Setting up firestore trigger "${name}"`);
 
-    utils.logLabeledBullet(
-      "functions",
-      `Attempting to contact firestore emulator on port ${firestorePort}`
-    );
+    if (!EmulatorRegistry.hasWebSocketDebugger()) {
+      utils.logLabeledBullet("functions", `Setting up firestore trigger "${name}"`);
+      utils.logLabeledBullet(
+        "functions",
+        `Attempting to contact firestore emulator on port ${firestorePort}`
+      );
+    }
 
     return new Promise((resolve, reject) => {
       request.put(
