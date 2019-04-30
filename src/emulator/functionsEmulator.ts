@@ -234,13 +234,19 @@ export class FunctionsEmulator implements EmulatorInstance {
       projectId: this.projectId,
     };
 
-    const runtime = InvokeRuntime(nodeBinary, runtimeBundle);
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    const runtimeOptions: InvokeRuntimeOptions = {};
+
+    if (wsDebugger) {
+      runtimeOptions.enhancedLogs = true;
+    }
+
+    const runtime = InvokeRuntime(nodeBinary, runtimeBundle, runtimeOptions);
     runtime.events.on("log", this.logRuntimeEvent);
 
-    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
     if (wsDebugger) {
-      runtime.events.on("log", async (log: EmulatorLog) => {
-        await wsDebugger.sendMessage("log", { module: "functions", mode, log });
+      runtime.events.on("log", (log: EmulatorLog) => {
+        wsDebugger.sendMessage("log", { module: "functions", mode, log });
       });
     }
 
@@ -349,27 +355,32 @@ export class FunctionsEmulator implements EmulatorInstance {
   }
 }
 
+interface InvokeRuntimeOptions {
+  serializedTriggers?: string;
+  env?: { [key: string]: string };
+  enhancedLogs?: boolean;
+}
+
 export function InvokeRuntime(
   nodeBinary: string,
   frb: FunctionsRuntimeBundle,
-  opts?: { serializedTriggers?: string; env?: { [key: string]: string } }
+  opts: InvokeRuntimeOptions = {}
 ): FunctionsRuntimeInstance {
-  opts = opts || {};
-
   const emitter = new EventEmitter();
   const metadata: { [key: string]: any } = {};
   let readyResolve: (value?: void | PromiseLike<void>) => void;
   const ready = new Promise<void>((resolve) => (readyResolve = resolve));
+  const runtimeArgs = [
+    path.join(__dirname, "functionsEmulatorRuntime.js"),
+    JSON.stringify(frb),
+    opts.serializedTriggers || "",
+  ];
 
-  const runtime = spawn(
-    nodeBinary,
-    [
-      path.join(__dirname, "functionsEmulatorRuntime.js"),
-      JSON.stringify(frb),
-      opts.serializedTriggers || "",
-    ],
-    { env: opts.env || {} }
-  );
+  if (opts.enhancedLogs) {
+    runtimeArgs.push("--enhance-logs");
+  }
+
+  const runtime = spawn(nodeBinary, runtimeArgs, { env: opts.env || {} });
 
   const buffers: { [pipe: string]: string } = { stderr: "", stdout: "" };
   for (const pipe in buffers) {

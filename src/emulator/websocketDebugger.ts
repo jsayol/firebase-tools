@@ -170,8 +170,8 @@ export class WebSocketDebugger extends EventEmitter {
     if (!this.stdoutWrite) {
       this.stdoutWrite = process.stdout._write;
 
-      process.stdout._write = async (chunk, encoding, done) => {
-        await this.processOutput("stdout", chunk);
+      process.stdout._write = (chunk, encoding, done) => {
+        this.processOutput("stdout", chunk);
         if (silent) {
           done();
         } else {
@@ -185,8 +185,8 @@ export class WebSocketDebugger extends EventEmitter {
     if (!this.stderrWrite) {
       this.stderrWrite = process.stderr._write;
 
-      process.stderr._write = async (chunk, encoding, done) => {
-        await this.processOutput("stderr", chunk);
+      process.stderr._write = (chunk, encoding, done) => {
+        this.processOutput("stderr", chunk);
         if (silent) {
           done();
         } else {
@@ -210,15 +210,14 @@ export class WebSocketDebugger extends EventEmitter {
     }
   }
 
-  private async processOutput(from: "stdout" | "stderr", chunk: string): Promise<void> {
+  private processOutput(from: "stdout" | "stderr", chunk: string): void {
     this.buffered[from] += chunk;
     let newlineIndex = this.buffered[from].indexOf("\n");
 
     while (newlineIndex >= 0) {
       // `line` includes a newline at the end
       const line = this.buffered[from].slice(0, newlineIndex + 1);
-      await this.init.promise;
-      await this.sendMessage(from, line);
+      this.sendMessage(from, line);
       this.buffered[from] = this.buffered[from].slice(newlineIndex + 1);
       newlineIndex = this.buffered[from].indexOf("\n");
     }

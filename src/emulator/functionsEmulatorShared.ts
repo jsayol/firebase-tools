@@ -30,14 +30,12 @@ export class EmulatedTrigger {
   static fromDirectory(definition: EmulatedTriggerDefinition, directory: string): EmulatedTrigger {
     const emulatedTrigger = new EmulatedTrigger(definition);
     emulatedTrigger.directory = directory;
-    emulatedTrigger.definition = definition;
     return emulatedTrigger;
   }
 
   static fromModule(definition: EmulatedTriggerDefinition, module: any): EmulatedTrigger {
     const emulatedTrigger = new EmulatedTrigger(definition);
     emulatedTrigger.module = module;
-    emulatedTrigger.definition = definition;
     return emulatedTrigger;
   }
 

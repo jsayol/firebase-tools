@@ -1,5 +1,6 @@
 import * as path from "path";
 import * as fs from "fs";
+import * as util from "util";
 import { spawnSync } from "child_process";
 import * as admin from "firebase-admin";
 import { URL } from "url";
@@ -247,7 +248,7 @@ see https://firebase.google.com/docs/functions/local-emulator`,
   (ff as any).config = () => serviceProxy;
 }
 
-async function _ProcessHTTPS(trigger: EmulatedTrigger): Promise<void> {
+async function _ProcessHTTPS(trigger: EmulatedTrigger, enhancedLogs?: boolean): Promise<void> {
   const ephemeralServer = express();
   const socketPath = getTemporarySocketPath(process.pid);
 
@@ -276,7 +277,7 @@ async function _ProcessHTTPS(trigger: EmulatedTrigger): Promise<void> {
         }
       }
 
-      await Run([req, res], func);
+      await Run([req, res], func, enhancedLogs);
     };
 
     ephemeralServer.get("/*", handler);
@@ -291,7 +292,8 @@ async function _ProcessHTTPS(trigger: EmulatedTrigger): Promise<void> {
 async function _ProcessBackground(
   app: admin.app.App,
   proto: any,
-  trigger: EmulatedTrigger
+  trigger: EmulatedTrigger,
+  enhancedLogs?: boolean
 ): Promise<void> {
   new EmulatorLog("SYSTEM", "runtime-status", "ready").log();
   const { Change } = require("firebase-functions");
@@ -329,11 +331,15 @@ async function _ProcessBackground(
   new EmulatorLog("DEBUG", "runtime-status", `Requesting a wrapped function.`).log();
   const func = trigger.getWrappedFunction();
 
-  await Run([data, ctx], func);
+  await Run([data, ctx], func, enhancedLogs);
 }
 
 // TODO(abehaskins): This signature could probably use work lol
-async function Run(args: any[], func: (a: any, b: any) => Promise<any>): Promise<any> {
+async function Run(
+  args: any[],
+  func: (a: any, b: any) => Promise<any>,
+  enhancedLogs = false
+): Promise<any> {
   if (args.length < 2) {
     throw new Error("Function must be passed 2 args.");
   }
@@ -341,8 +347,38 @@ async function Run(args: any[], func: (a: any, b: any) => Promise<any>): Promise
   /* tslint:disable:no-console */
   const log = console.log;
   console.log = (...messages: any[]) => {
-    new EmulatorLog("USER", "function-log", messages.join(" ")).log();
+    const content = messages
+      .map((message) => {
+        if (typeof message === "string" || !enhancedLogs) {
+          return message;
+        } else {
+          return util.inspect(message, { depth: null, colors: true });
+        }
+      })
+      .join(" ");
+    new EmulatorLog("USER", "function-log", content).log();
   };
+
+  const info = console.info;
+  console.info = console.log;
+
+  let error: typeof console.error | undefined;
+  if (enhancedLogs) {
+    /* tslint:disable:no-console */
+    error = console.error;
+    console.error = (...messages: any[]) => {
+      const content = messages
+        .map((message) => {
+          if (typeof message === "string") {
+            return message;
+          } else {
+            return util.inspect(message, { depth: null, colors: true });
+          }
+        })
+        .join(" ");
+      new EmulatorLog("USER", "function-error", content).log();
+    };
+  }
 
   let caughtErr;
   try {
@@ -351,7 +387,13 @@ async function Run(args: any[], func: (a: any, b: any) => Promise<any>): Promise
     caughtErr = err;
     console.warn(caughtErr);
   }
+
   console.log = log;
+  console.info = info;
+
+  if (error) {
+    console.error = error;
+  }
 
   if (caughtErr) {
     new EmulatorLog("WARN", "function-log", caughtErr.stack).log();
@@ -370,6 +412,7 @@ function isFeatureEnabled(
 async function main(): Promise<void> {
   const serializedFunctionsRuntimeBundle = process.argv[2] || "{}";
   const serializedFunctionTrigger = process.argv[3];
+  const enhancedLogs = process.argv.length > 3 && process.argv[4] === "--enhance-logs";
 
   new EmulatorLog("DEBUG", "runtime-status", "Functions runtime initialized.", {
     cwd: process.cwd(),
@@ -461,10 +504,10 @@ async function main(): Promise<void> {
 
   switch (frb.mode) {
     case "BACKGROUND":
-      await _ProcessBackground(stubbedAdminApp, frb.proto, triggers[frb.triggerId]);
+      await _ProcessBackground(stubbedAdminApp, frb.proto, triggers[frb.triggerId], enhancedLogs);
       break;
     case "HTTPS":
-      await _ProcessHTTPS(triggers[frb.triggerId]);
+      await _ProcessHTTPS(triggers[frb.triggerId], enhancedLogs);
       break;
   }
 

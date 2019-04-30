@@ -247,18 +247,18 @@ async function startAll(options: any, wsInitData?: WebSocketDebuggerInitData): P
 
       let buffered = "";
       const debugStream = new stream.Writable();
-      debugStream._write = async (
+      debugStream._write = (
         chunk: any,
         encoding: string,
         done: (error?: Error | null) => void
-      ): Promise<void> => {
+      ): void => {
         buffered += chunk.toString();
         let newlineIndex = buffered.indexOf("\n");
 
         while (newlineIndex >= 0) {
           // `line` includes a newline at the end
           const line = buffered.slice(0, newlineIndex + 1);
-          await wsDebugger.sendMessage("log", {
+          wsDebugger.sendMessage("log", {
             module: "hosting",
             line,
           });
