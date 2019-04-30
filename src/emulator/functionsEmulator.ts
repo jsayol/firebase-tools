@@ -268,7 +268,6 @@ export class FunctionsEmulator implements EmulatorInstance {
       case "INFO":
         utils.logLabeledBullet("functions", log.text);
       default:
-        // TODO(jsayol): uncomment this
         logger.info(`${log.level}: ${log.text}`);
         break;
     }

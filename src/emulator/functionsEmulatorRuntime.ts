@@ -61,7 +61,7 @@ function _requireResolvePolyfill(moduleName: string, opts: { paths: string[] }):
 }
 require.resolve = _requireResolvePolyfill as RequireResolve;
 
-function _InitializeNetworkFiltering(): void {
+function _InitializeNetworkFiltering(triggerId?: string): void {
   /*
     We mock out a ton of different paths that we can take to network I/O. It doesn't matter if they
     overlap (like TLS and HTTPS) because the dev will either whitelist, block, or allow for one
@@ -131,11 +131,13 @@ blocker works). As of this note,
         new EmulatorLog("SYSTEM", "googleapis-network-access", "", {
           href,
           module: bundle.module,
+          triggerId,
         }).log();
       } else {
         new EmulatorLog("SYSTEM", "unidentified-network-access", "", {
           href,
           module: bundle.module,
+          triggerId,
         }).log();
       }
 
@@ -149,13 +151,19 @@ blocker works). As of this note,
     return { bundle, status: "mocked" };
   });
 
-  new EmulatorLog("DEBUG", "runtime-status", "Outgoing network have been stubbed.", results).log();
+  new EmulatorLog(
+    "DEBUG",
+    "runtime-status",
+    "Outgoing network have been stubbed.",
+    triggerId ? { results, triggerId } : results
+  ).log();
 }
 
 function _InitializeFirebaseAdminStubs(
   projectId: string,
   functionsDir: string,
-  firestorePort: number
+  firestorePort: number,
+  triggerId?: string
 ): admin.app.App | void {
   const adminResolution = require.resolve("firebase-admin", {
     paths: [path.join(functionsDir, "node_modules")],
@@ -182,10 +190,10 @@ function _InitializeFirebaseAdminStubs(
   localAdminModule.initializeApp = (opts: any, name: string) => {
     {
       if (name) {
-        new EmulatorLog("SYSTEM", "non-default-admin-app-used", "", { name }).log();
+        new EmulatorLog("SYSTEM", "non-default-admin-app-used", "", { name, triggerId }).log();
         return originalInitializeApp(opts, name);
       }
-      new EmulatorLog("SYSTEM", "default-admin-app-used", "").log();
+      new EmulatorLog("SYSTEM", "default-admin-app-used", "", { triggerId }).log();
       return validApp;
     }
   };
@@ -203,7 +211,7 @@ function _InitializeEnvironmentalVariables(projectId: string): void {
   process.env.GCLOUD_PROJECT = projectId;
 }
 
-function _InitializeFunctionsConfigHelper(functionsDir: string): void {
+function _InitializeFunctionsConfigHelper(functionsDir: string, triggerId?: string): void {
   const functionsResolution = require.resolve("firebase-functions", {
     paths: [path.join(functionsDir, "node_modules")],
   });
@@ -213,6 +221,7 @@ function _InitializeFunctionsConfigHelper(functionsDir: string): void {
   const config = ff.config();
   new EmulatorLog("DEBUG", "runtime-status", "Checked functions.config()", {
     config: ff.config(),
+    triggerId,
   }).log();
 
   const serviceProxy = new Proxy(config, {
@@ -235,7 +244,7 @@ function _InitializeFunctionsConfigHelper(functionsDir: string): void {
                   "."
                 )}" for information on how to set runtime configuration values in the emulator, \
 see https://firebase.google.com/docs/functions/local-emulator`,
-                {}
+                { triggerId }
               ).log();
               return undefined;
             }
@@ -254,7 +263,12 @@ async function _ProcessHTTPS(trigger: EmulatedTrigger, enhancedLogs?: boolean): 
 
   return new Promise((resolveEphemeralServer) => {
     const handler = async (req: express.Request, res: express.Response) => {
-      new EmulatorLog("DEBUG", "runtime-status", `Ephemeral server used!`).log();
+      new EmulatorLog(
+        "DEBUG",
+        "runtime-status",
+        `Ephemeral server used!`,
+        enhancedLogs ? { triggerId: trigger.definition.name } : undefined
+      ).log();
       const func = trigger.getRawFunction();
 
       res.on("finish", () => {
@@ -269,7 +283,8 @@ async function _ProcessHTTPS(trigger: EmulatedTrigger, enhancedLogs?: boolean): 
           new EmulatorLog(
             "DEBUG",
             "runtime-status",
-            `Detected JSON request body: ${dataStr}`
+            `Detected JSON request body: ${dataStr}`,
+            enhancedLogs ? { triggerId: trigger.definition.name } : undefined
           ).log();
           req.body = JSON.parse(dataStr);
         } else {
@@ -277,14 +292,17 @@ async function _ProcessHTTPS(trigger: EmulatedTrigger, enhancedLogs?: boolean): 
         }
       }
 
-      await Run([req, res], func, enhancedLogs);
+      await Run([req, res], func, enhancedLogs, trigger.definition.name);
     };
 
     ephemeralServer.get("/*", handler);
     ephemeralServer.post("/*", handler);
 
     const instance = ephemeralServer.listen(socketPath, () => {
-      new EmulatorLog("SYSTEM", "runtime-status", "ready", { socketPath }).log();
+      new EmulatorLog("SYSTEM", "runtime-status", "ready", {
+        socketPath,
+        triggerId: enhancedLogs ? trigger.definition.name : undefined,
+      }).log();
     });
   });
 }
@@ -295,7 +313,12 @@ async function _ProcessBackground(
   trigger: EmulatedTrigger,
   enhancedLogs?: boolean
 ): Promise<void> {
-  new EmulatorLog("SYSTEM", "runtime-status", "ready").log();
+  new EmulatorLog(
+    "SYSTEM",
+    "runtime-status",
+    "ready",
+    enhancedLogs ? { triggerId: trigger.definition.name } : undefined
+  ).log();
   const { Change } = require("firebase-functions");
 
   const newSnap =
@@ -328,17 +351,23 @@ async function _ProcessBackground(
     authType: "UNAUTHENTICATED",
   };
 
-  new EmulatorLog("DEBUG", "runtime-status", `Requesting a wrapped function.`).log();
+  new EmulatorLog(
+    "DEBUG",
+    "runtime-status",
+    `Requesting a wrapped function.`,
+    enhancedLogs ? { triggerId: trigger.definition.name } : undefined
+  ).log();
   const func = trigger.getWrappedFunction();
 
-  await Run([data, ctx], func, enhancedLogs);
+  await Run([data, ctx], func, enhancedLogs, trigger.definition.name);
 }
 
 // TODO(abehaskins): This signature could probably use work lol
 async function Run(
   args: any[],
   func: (a: any, b: any) => Promise<any>,
-  enhancedLogs = false
+  enhancedLogs = false,
+  triggerId?: string
 ): Promise<any> {
   if (args.length < 2) {
     throw new Error("Function must be passed 2 args.");
@@ -363,7 +392,12 @@ async function Run(
         }
       })
       .join(" ");
-    new EmulatorLog("USER", "function-log", content).log();
+    new EmulatorLog(
+      "USER",
+      "function-log",
+      content,
+      enhancedLogs ? { triggerId } : undefined
+    ).log();
   };
 
   const info = console.info;
@@ -383,7 +417,7 @@ async function Run(
           }
         })
         .join(" ");
-      new EmulatorLog("USER", "function-error", content).log();
+      new EmulatorLog("USER", "function-error", content, { triggerId }).log();
     };
   }
 
@@ -403,7 +437,12 @@ async function Run(
   }
 
   if (caughtErr) {
-    new EmulatorLog("WARN", "function-log", caughtErr.stack).log();
+    new EmulatorLog(
+      "WARN",
+      "function-log",
+      caughtErr.stack,
+      enhancedLogs ? { triggerId } : undefined
+    ).log();
   }
 
   return;
@@ -421,31 +460,50 @@ async function main(): Promise<void> {
   const serializedFunctionTrigger = process.argv[3];
   const enhancedLogs = process.argv.length > 3 && process.argv[4] === "--enhance-logs";
 
-  new EmulatorLog("DEBUG", "runtime-status", "Functions runtime initialized.", {
-    cwd: process.cwd(),
-    node_version: process.versions.node,
-  }).log();
+  let frb: FunctionsRuntimeBundle;
 
-  const frb = JSON.parse(serializedFunctionsRuntimeBundle) as FunctionsRuntimeBundle;
+  if (enhancedLogs) {
+    // For enhanced logs we need to know the triggerId for every item logged, including the first one.
+    frb = JSON.parse(serializedFunctionsRuntimeBundle);
+    new EmulatorLog("DEBUG", "runtime-status", "Functions runtime initialized.", {
+      cwd: process.cwd(),
+      node_version: process.versions.node,
+      triggerId: frb.triggerId,
+    }).log();
+  } else {
+    new EmulatorLog("DEBUG", "runtime-status", "Functions runtime initialized.", {
+      cwd: process.cwd(),
+      node_version: process.versions.node,
+    }).log();
+
+    frb = JSON.parse(serializedFunctionsRuntimeBundle) as FunctionsRuntimeBundle;
+  }
+
   new EmulatorLog("DEBUG", "runtime-status", "FunctionsRuntimeBundle parsed", frb).log();
 
   _InitializeEnvironmentalVariables(frb.projectId);
   if (isFeatureEnabled(frb, "network_filtering")) {
-    _InitializeNetworkFiltering();
+    _InitializeNetworkFiltering(enhancedLogs ? frb.triggerId : undefined);
   }
 
   if (isFeatureEnabled(frb, "functions_config_helper")) {
-    _InitializeFunctionsConfigHelper(frb.cwd);
+    _InitializeFunctionsConfigHelper(frb.cwd, enhancedLogs ? frb.triggerId : undefined);
   }
 
   const stubbedAdminApp = _InitializeFirebaseAdminStubs(
     frb.projectId,
     frb.cwd,
-    frb.ports.firestore
+    frb.ports.firestore,
+    enhancedLogs ? frb.triggerId : undefined
   );
 
   if (!stubbedAdminApp) {
-    new EmulatorLog("FATAL", "runtime-status", "Could not initialize stubbed admin app.").log();
+    new EmulatorLog(
+      "FATAL",
+      "runtime-status",
+      "Could not initialize stubbed admin app.",
+      enhancedLogs ? { triggerId: frb.triggerId } : undefined
+    ).log();
     return process.exit();
   }
 
@@ -477,22 +535,26 @@ async function main(): Promise<void> {
     new EmulatorLog(
       "FATAL",
       "runtime-status",
-      `Could not find trigger "${frb.triggerId}" in your functions directory.`
+      `Could not find trigger "${frb.triggerId}" in your functions directory.`,
+      enhancedLogs ? { triggerId: frb.triggerId } : undefined
     ).log();
     return;
   } else {
     new EmulatorLog(
       "DEBUG",
       "runtime-status",
-      `Trigger "${frb.triggerId}" has been found, beginning invocation!`
+      `Trigger "${frb.triggerId}" has been found, beginning invocation!`,
+      enhancedLogs ? { triggerId: frb.triggerId } : undefined
     ).log();
   }
 
+  if (enhancedLogs) {
+    new EmulatorLog("INFO", "runtime-status", `Function ${frb.triggerId} started.`, {
+      triggerId: frb.triggerId,
+    }).log();
+  }
+
   const trigger = triggers[frb.triggerId];
-  let seconds = 0;
-  const timerId = setInterval(() => {
-    seconds++;
-  }, 1000);
 
   let timeoutId;
   if (isFeatureEnabled(frb, "timeout")) {
@@ -503,11 +565,15 @@ async function main(): Promise<void> {
         `Your function timed out after ~${
           trigger.definition.timeout
         }. To configure this timeout, see
-      https://firebase.google.com/docs/functions/manage-functions#set_timeout_and_memory_allocation.`
+      https://firebase.google.com/docs/functions/manage-functions#set_timeout_and_memory_allocation.`,
+        enhancedLogs ? { triggerId: frb.triggerId } : undefined
       ).log();
       process.exit();
     }, trigger.timeout);
   }
+
+  // Note: for finer duration (ns) use `performance` from `perf_hooks` Node module
+  const startTime = Date.now();
 
   switch (frb.mode) {
     case "BACKGROUND":
@@ -518,14 +584,17 @@ async function main(): Promise<void> {
       break;
   }
 
+  const duration = Math.round(Date.now() - startTime);
+
   if (timeoutId) {
     clearTimeout(timeoutId);
   }
-  clearInterval(timerId);
+
   new EmulatorLog(
     "INFO",
     "runtime-status",
-    `function ${frb.triggerId} finished in ~${seconds}s.`
+    `Function ${frb.triggerId} finished in ${duration} ms.`,
+    enhancedLogs ? { triggerId: frb.triggerId } : undefined
   ).log();
 }
 
