@@ -344,6 +344,13 @@ async function Run(
     throw new Error("Function must be passed 2 args.");
   }
 
+  const inspectOptions = {
+    depth: null,
+    colors: true,
+    compact: false,
+    maxArrayLength: Infinity,
+  };
+
   /* tslint:disable:no-console */
   const log = console.log;
   console.log = (...messages: any[]) => {
@@ -352,7 +359,7 @@ async function Run(
         if (typeof message === "string" || !enhancedLogs) {
           return message;
         } else {
-          return util.inspect(message, { depth: null, colors: true });
+          return util.inspect(message, inspectOptions);
         }
       })
       .join(" ");
@@ -372,7 +379,7 @@ async function Run(
           if (typeof message === "string") {
             return message;
           } else {
-            return util.inspect(message, { depth: null, colors: true });
+            return util.inspect(message, inspectOptions);
           }
         })
         .join(" ");
