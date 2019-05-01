@@ -15,7 +15,11 @@ import * as prompt from "../prompt";
 
 import * as spawn from "cross-spawn";
 import { spawnSync } from "child_process";
-import { FunctionsRuntimeBundle, getTriggersFromDirectory } from "./functionsEmulatorShared";
+import {
+  EmulatedTriggerDefinition,
+  FunctionsRuntimeBundle,
+  getTriggersFromDirectory,
+} from "./functionsEmulatorShared";
 import { EmulatorRegistry } from "./registry";
 import { EventEmitter } from "events";
 import { WebSocketDebuggerInitData } from "./websocketDebugger";
@@ -285,6 +289,11 @@ export class FunctionsEmulator implements EmulatorInstance {
       this.firebaseConfig
     );
 
+    const initializedTriggers: { [k: string]: EmulatedTriggerDefinition[] } = {
+      https: [],
+      firestore: [],
+    };
+
     const triggerNames = Object.keys(triggersByName);
     for (const name of triggerNames) {
       const trigger = triggersByName[name];
@@ -292,11 +301,13 @@ export class FunctionsEmulator implements EmulatorInstance {
       if (trigger.definition.httpsTrigger) {
         const url = this.getHttpFunctionUrl(name);
         utils.logLabeledBullet("functions", `HTTP trigger initialized at ${clc.bold(url)}`);
+        initializedTriggers.https.push(trigger.definition);
       } else {
         const service: string = _.get(trigger.definition, "eventTrigger.service", "unknown");
         switch (service) {
           case SERVICE_FIRESTORE:
             await this.addFirestoreTrigger(this.projectId, name, trigger);
+            initializedTriggers.firestore.push(trigger.definition);
             break;
           default:
             logger.debug(`Unsupported trigger: ${JSON.stringify(trigger)}`);
@@ -306,6 +317,11 @@ export class FunctionsEmulator implements EmulatorInstance {
             break;
         }
       }
+    }
+
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      wsDebugger.sendMessage("functions", initializedTriggers);
     }
   }
 

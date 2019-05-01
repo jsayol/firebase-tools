@@ -36,7 +36,8 @@ type SendMessageType =
   | "stderr"
   | "pid"
   | "emulator-port-taken"
-  | "get-web-config";
+  | "get-web-config"
+  | "functions";
 
 function isValidInitData(
   initData: WebSocketDebuggerInitData

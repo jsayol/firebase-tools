@@ -9,7 +9,7 @@ import * as os from "os";
 import * as path from "path";
 import * as express from "express";
 
-interface EmulatedTriggerDefinition {
+export interface EmulatedTriggerDefinition {
   entryPoint: string;
   name: string;
   timeout?: string | number; // Can be "3s" for some reason lol
