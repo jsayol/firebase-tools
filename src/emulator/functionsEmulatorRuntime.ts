@@ -257,7 +257,11 @@ see https://firebase.google.com/docs/functions/local-emulator`,
   (ff as any).config = () => serviceProxy;
 }
 
-async function _ProcessHTTPS(trigger: EmulatedTrigger, enhancedLogs?: boolean): Promise<void> {
+async function _ProcessHTTPS(
+  trigger: EmulatedTrigger,
+  enhancedLogs = false,
+  isDebugging = false
+): Promise<void> {
   const ephemeralServer = express();
   const socketPath = getTemporarySocketPath(process.pid);
 
@@ -292,7 +296,7 @@ async function _ProcessHTTPS(trigger: EmulatedTrigger, enhancedLogs?: boolean): 
         }
       }
 
-      await Run([req, res], func, enhancedLogs, trigger.definition.name);
+      await Run([req, res], func, enhancedLogs, isDebugging, trigger.definition.name);
     };
 
     ephemeralServer.get("/*", handler);
@@ -311,7 +315,8 @@ async function _ProcessBackground(
   app: admin.app.App,
   proto: any,
   trigger: EmulatedTrigger,
-  enhancedLogs?: boolean
+  enhancedLogs: boolean,
+  isDebugging: boolean
 ): Promise<void> {
   new EmulatorLog(
     "SYSTEM",
@@ -359,15 +364,16 @@ async function _ProcessBackground(
   ).log();
   const func = trigger.getWrappedFunction();
 
-  await Run([data, ctx], func, enhancedLogs, trigger.definition.name);
+  await Run([data, ctx], func, enhancedLogs, isDebugging, trigger.definition.name);
 }
 
 // TODO(abehaskins): This signature could probably use work lol
 async function Run(
   args: any[],
   func: (a: any, b: any) => Promise<any>,
-  enhancedLogs = false,
-  triggerId?: string
+  enhancedLogs: boolean,
+  isDebugging: boolean,
+  triggerId: string
 ): Promise<any> {
   if (args.length < 2) {
     throw new Error("Function must be passed 2 args.");
@@ -381,44 +387,35 @@ async function Run(
   };
 
   /* tslint:disable:no-console */
-  const log = console.log;
-  console.log = (...messages: any[]) => {
-    const content = messages
-      .map((message) => {
-        if (typeof message === "string" || !enhancedLogs) {
-          return message;
-        } else {
-          return util.inspect(message, inspectOptions);
-        }
-      })
-      .join(" ");
-    new EmulatorLog(
-      "USER",
-      "function-log",
-      content,
-      enhancedLogs ? { triggerId } : undefined
-    ).log();
+
+  const originalConsoleFn = {
+    log: console.log,
+    info: console.info,
+    error: console.error,
   };
 
-  const info = console.info;
-  console.info = console.log;
-
-  let error: typeof console.error | undefined;
-  if (enhancedLogs) {
-    /* tslint:disable:no-console */
-    error = console.error;
-    console.error = (...messages: any[]) => {
+  if (!isDebugging) {
+    const consoleFn = (type: "log" | "error") => (...messages: any[]) => {
       const content = messages
-        .map((message) => {
-          if (typeof message === "string") {
-            return message;
-          } else {
-            return util.inspect(message, inspectOptions);
-          }
+        .map((message: any) => {
+          return !enhancedLogs || typeof message === "string"
+            ? message
+            : util.inspect(message, inspectOptions);
         })
         .join(" ");
-      new EmulatorLog("USER", "function-error", content, { triggerId }).log();
+      new EmulatorLog(
+        "USER",
+        "function-" + type,
+        content,
+        enhancedLogs ? { triggerId } : undefined
+      ).log();
     };
+
+    console.log = consoleFn("log");
+    console.info = consoleFn("log");
+    if (enhancedLogs) {
+      console.error = consoleFn("error");
+    }
   }
 
   let caughtErr;
@@ -429,12 +426,13 @@ async function Run(
     console.warn(caughtErr);
   }
 
-  console.log = log;
-  console.info = info;
-
-  if (error) {
-    console.error = error;
+  if (!isDebugging) {
+    console.log = originalConsoleFn.log;
+    console.info = originalConsoleFn.info;
+    console.error = originalConsoleFn.error;
   }
+
+  /* tslint:enable:no-console */
 
   if (caughtErr) {
     new EmulatorLog(
@@ -458,7 +456,21 @@ function isFeatureEnabled(
 async function main(): Promise<void> {
   const serializedFunctionsRuntimeBundle = process.argv[2] || "{}";
   const serializedFunctionTrigger = process.argv[3];
-  const enhancedLogs = process.argv.length > 3 && process.argv[4] === "--enhance-logs";
+
+  let enhancedLogs = false;
+  let isDebugging = false;
+  if (process.argv.length > 4) {
+    for (let i = 4; i <= process.argv.length; i++) {
+      switch (process.argv[i]) {
+        case "--enhance-logs":
+          enhancedLogs = true;
+          break;
+        case "--is-debugging":
+          isDebugging = true;
+          break;
+      }
+    }
+  }
 
   let frb: FunctionsRuntimeBundle;
 
@@ -558,7 +570,7 @@ async function main(): Promise<void> {
   const trigger = triggers[frb.triggerId];
 
   let timeoutId;
-  if (isFeatureEnabled(frb, "timeout")) {
+  if (isFeatureEnabled(frb, "timeout") && !isDebugging) {
     timeoutId = setTimeout(() => {
       new EmulatorLog(
         "WARN",
@@ -578,14 +590,21 @@ async function main(): Promise<void> {
 
   switch (frb.mode) {
     case "BACKGROUND":
-      await _ProcessBackground(stubbedAdminApp, frb.proto, triggers[frb.triggerId], enhancedLogs);
+      await _ProcessBackground(
+        stubbedAdminApp,
+        frb.proto,
+        triggers[frb.triggerId],
+        enhancedLogs,
+        isDebugging
+      );
       break;
     case "HTTPS":
-      await _ProcessHTTPS(triggers[frb.triggerId], enhancedLogs);
+      await _ProcessHTTPS(triggers[frb.triggerId], enhancedLogs, isDebugging);
       break;
   }
 
-  const duration = Math.round(Date.now() - startTime);
+  const time = Date.now() - startTime;
+  const duration = time >= 1000 ? `~${Math.round(time / 100) / 10} seconds` : `${time} ms`;
 
   if (timeoutId) {
     clearTimeout(timeoutId);
@@ -594,7 +613,7 @@ async function main(): Promise<void> {
   new EmulatorLog(
     "INFO",
     "runtime-status",
-    `Function ${frb.triggerId} finished in ${duration} ms.`,
+    `Function ${frb.triggerId} finished in ${duration}.`,
     enhancedLogs ? { triggerId: frb.triggerId, skipStdout: true } : undefined
   ).log();
 }

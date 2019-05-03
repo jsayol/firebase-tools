@@ -432,6 +432,7 @@ export function InvokeRuntime(
 
   if (opts.inspectorPort) {
     runtimeArgs.splice(0, 0, "--inspect-brk=" + opts.inspectorPort);
+    runtimeArgs.push("--is-debugging");
   }
 
   const runtime = spawn(nodeBinary, runtimeArgs, { env: opts.env || {} });
