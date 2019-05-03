@@ -28,7 +28,7 @@ module.exports = function(projectId, sourceDir, configValues, firebaseConfig) {
       // is loaded, which would normally set FIREBASE_CONFIG.
       env.FIREBASE_CONFIG = firebaseConfig;
     }
-    var parser = fork(TRIGGER_PARSER, [sourceDir], { silent: true, env: env });
+    var parser = fork(TRIGGER_PARSER, [sourceDir], { silent: true, env: env, execArgv: [] });
 
     parser.on("message", function(message) {
       if (message.triggers) {

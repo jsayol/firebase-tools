@@ -16,6 +16,7 @@ export interface WebSocketDebuggerInitData {
     useVersion?: string; // major version number
     installIfMissing: boolean;
   };
+  functionsDebug?: boolean;
 }
 
 interface LocalInitData {
@@ -34,10 +35,11 @@ type SendMessageType =
   | "error"
   | "stdout"
   | "stderr"
-  | "pid"
+  | "emulator-pid"
   | "emulator-port-taken"
   | "get-web-config"
-  | "functions";
+  | "functions"
+  | "debug-function";
 
 function isValidInitData(
   initData: WebSocketDebuggerInitData

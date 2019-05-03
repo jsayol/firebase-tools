@@ -4,6 +4,7 @@ import * as express from "express";
 import * as request from "request";
 import * as clc from "cli-color";
 import * as http from "http";
+import * as pf from "portfinder";
 
 import * as getProjectId from "../getProjectId";
 import * as functionsConfig from "../functionsConfig";
@@ -149,7 +150,7 @@ export class FunctionsEmulator implements EmulatorInstance {
       const mode = isHttpsTrigger ? "HTTPS" : "BACKGROUND";
       const reqBody = (req as RequestWithRawBody).rawBody;
       const proto = reqBody ? JSON.parse(reqBody) : undefined;
-      const runtime = this.startFunctionRuntime(nodeBinary, triggerName, mode, proto);
+      const runtime = await this.startFunctionRuntime(nodeBinary, triggerName, mode, proto);
 
       if (isHttpsTrigger) {
         logger.debug(`[functions] Waiting for runtime to be ready!`);
@@ -221,12 +222,12 @@ export class FunctionsEmulator implements EmulatorInstance {
     this.server = hub.listen(this.port);
   }
 
-  startFunctionRuntime(
+  async startFunctionRuntime(
     nodeBinary: string,
     triggerName: string,
     mode: FunctionsRuntimeMode,
     proto?: any
-  ): FunctionsRuntimeInstance {
+  ): Promise<FunctionsRuntimeInstance> {
     const runtimeBundle: FunctionsRuntimeBundle = {
       mode,
       ports: {
@@ -243,6 +244,11 @@ export class FunctionsEmulator implements EmulatorInstance {
 
     if (wsDebugger) {
       runtimeOptions.enhancedLogs = true;
+
+      const wsInitData = await wsDebugger.getInitData();
+      if (wsInitData.functionsDebug) {
+        runtimeOptions.inspectorPort = await pf.getPortPromise();
+      }
     }
 
     const runtime = InvokeRuntime(nodeBinary, runtimeBundle, runtimeOptions);
@@ -257,6 +263,27 @@ export class FunctionsEmulator implements EmulatorInstance {
       runtime.events.on("log", (log: EmulatorLog) => {
         wsDebugger.sendMessage("log", { module: "functions", mode, log });
       });
+
+      if (runtimeOptions.inspectorPort) {
+        try {
+          // If the user has transpiled TypeScript files, the debugger won't be
+          // able to find them unless we tell it where those files are.
+          // To ensure debugging works in all cases we need to get the path to
+          // the directory that contains the JS files. We get it from the
+          // "main" property from package.json
+          const pkg = require(path.join(this.functionsDir, "package.json"));
+          wsDebugger.sendMessage("debug-function", {
+            port: runtimeOptions.inspectorPort,
+            outDir: path.dirname(path.resolve(this.functionsDir, pkg.main)),
+          });
+        } catch (err) {
+          // Something went wrong reading package.json
+          utils.logWarning(
+            "Failed to get information to initialize the Node debugger: " + err && err.message,
+            "error"
+          );
+        }
+      }
     }
 
     return runtime;
@@ -381,6 +408,7 @@ interface InvokeRuntimeOptions {
   serializedTriggers?: string;
   env?: { [key: string]: string };
   enhancedLogs?: boolean;
+  inspectorPort?: number;
 }
 
 export function InvokeRuntime(
@@ -400,6 +428,10 @@ export function InvokeRuntime(
 
   if (opts.enhancedLogs) {
     runtimeArgs.push("--enhance-logs");
+  }
+
+  if (opts.inspectorPort) {
+    runtimeArgs.splice(0, 0, "--inspect-brk=" + opts.inspectorPort);
   }
 
   const runtime = spawn(nodeBinary, runtimeArgs, { env: opts.env || {} });

@@ -116,7 +116,7 @@ async function _runBinary(
     if (wsDebugger) {
       const { instance, stdout, ...emulatorDetails } = emulator;
 
-      wsDebugger.sendMessage("pid", {
+      wsDebugger.sendMessage("emulator-pid", {
         pid: emulator.instance.pid,
         emulator: emulatorDetails,
         command,
