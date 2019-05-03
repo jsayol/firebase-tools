@@ -561,10 +561,15 @@ async function main(): Promise<void> {
   }
 
   if (enhancedLogs) {
-    new EmulatorLog("INFO", "runtime-status", `Function ${frb.triggerId} started.`, {
-      triggerId: frb.triggerId,
-      skipStdout: true,
-    }).log();
+    new EmulatorLog(
+      "INFO",
+      "runtime-status",
+      `Function ${frb.triggerId} started${isDebugging ? " for debugging" : ""}.`,
+      {
+        triggerId: frb.triggerId,
+        skipStdout: true,
+      }
+    ).log();
   }
 
   const trigger = triggers[frb.triggerId];

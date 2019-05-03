@@ -1,6 +1,6 @@
 /* tslint:disable:no-console */
 import { ChildProcess } from "child_process";
-import { WebSocketDebuggerInitData } from "./websocketDebugger";
+import { WebSocketDebuggerConfig } from "./websocketDebugger";
 import { EmulatorRegistry } from "./registry";
 
 export const enum Emulators {
@@ -11,7 +11,7 @@ export const enum Emulators {
 }
 
 export interface EmulatorInstance {
-  start(wsInitData?: WebSocketDebuggerInitData): Promise<void>; // Called to begin emulator process
+  start(wsConfig?: WebSocketDebuggerConfig): Promise<void>; // Called to begin emulator process
   connect(): Promise<void>; // Called once all sibling emulators are start()'d
   stop(): Promise<void>; // Called to kill emulator process
 }

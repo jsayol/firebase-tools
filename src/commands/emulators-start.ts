@@ -20,7 +20,7 @@ import { FunctionsEmulator } from "../emulator/functionsEmulator";
 import { DatabaseEmulator } from "../emulator/databaseEmulator";
 import { FirestoreEmulator } from "../emulator/firestoreEmulator";
 import { HostingEmulator } from "../emulator/hostingEmulator";
-import { WebSocketDebugger, WebSocketDebuggerInitData } from "../emulator/websocketDebugger";
+import { WebSocketDebugger, WebSocketDebuggerConfig } from "../emulator/websocketDebugger";
 
 // tslint:disable-next-line: no-var-requires
 const terminate = require("terminate");
@@ -68,7 +68,7 @@ async function startEmulator(
   name: Emulators,
   addr: Address,
   instance: EmulatorInstance,
-  wsInitData?: WebSocketDebuggerInitData
+  wsConfig?: WebSocketDebuggerConfig
 ): Promise<void> {
   // Log the command for analytics
   track("emulators:start", name);
@@ -99,7 +99,7 @@ async function startEmulator(
 
   // Start the emulator, wait for it to grab its port, and then mark it as started
   // in the registry.
-  await instance.start(wsInitData);
+  await instance.start(wsConfig);
   await waitForPortClosed(addr.port);
 
   const info: EmulatorInfo = {
@@ -182,7 +182,7 @@ async function runScript(script: string): Promise<void> {
   });
 }
 
-async function startAll(options: any, wsInitData?: WebSocketDebuggerInitData): Promise<void> {
+async function startAll(options: any, wsConfig?: WebSocketDebuggerConfig): Promise<void> {
   // Emulators config is specified in firebase.json as:
   // "emulators": {
   //   "firestore": {
@@ -211,7 +211,7 @@ async function startAll(options: any, wsInitData?: WebSocketDebuggerInitData): P
       host: functionsAddr.host,
       port: functionsAddr.port,
     });
-    await startEmulator(Emulators.FUNCTIONS, functionsAddr, functionsEmulator, wsInitData);
+    await startEmulator(Emulators.FUNCTIONS, functionsAddr, functionsEmulator, wsConfig);
   }
 
   if (targets.indexOf("firestore") > -1) {
@@ -318,17 +318,17 @@ module.exports = new Command("emulators:start")
   .option("--ws <string>", "[Experimental] Set this address as the emulators' WebSocket debugger.")
   .action(async (options: any) => {
     let wsDebugger: WebSocketDebugger | undefined;
-    let wsInitData: WebSocketDebuggerInitData | undefined;
+    let wsConfig: WebSocketDebuggerConfig | undefined;
 
     if (options.ws) {
       wsDebugger = new WebSocketDebugger(options.ws);
       EmulatorRegistry.setWebSocketDebugger(wsDebugger);
-      wsInitData = await wsDebugger.getInitData();
-      options.projectNumber = wsInitData.projectNumber;
+      wsConfig = await wsDebugger.getConfig();
+      options.projectNumber = wsConfig.projectNumber;
     }
 
     try {
-      await startAll(options, wsInitData);
+      await startAll(options, wsConfig);
     } catch (e) {
       await cleanShutdown();
       throw e;

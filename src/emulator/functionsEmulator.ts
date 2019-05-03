@@ -23,7 +23,7 @@ import {
 } from "./functionsEmulatorShared";
 import { EmulatorRegistry } from "./registry";
 import { EventEmitter } from "events";
-import { WebSocketDebuggerInitData } from "./websocketDebugger";
+import { WebSocketDebuggerConfig } from "./websocketDebugger";
 
 const SERVICE_FIRESTORE = "firestore.googleapis.com";
 const SUPPORTED_SERVICES = [SERVICE_FIRESTORE];
@@ -55,7 +55,7 @@ export class FunctionsEmulator implements EmulatorInstance {
 
   constructor(private options: any, private args: FunctionsEmulatorArgs) {}
 
-  async start(wsInitData?: WebSocketDebuggerInitData): Promise<void> {
+  async start(wsConfig?: WebSocketDebuggerConfig): Promise<void> {
     if (this.args.port) {
       this.port = this.args.port;
     }
@@ -66,10 +66,10 @@ export class FunctionsEmulator implements EmulatorInstance {
       this.options.config.get("functions.source")
     );
 
-    const nodeBinary = await _getNodeBinary(this.functionsDir, wsInitData && wsInitData.node);
+    const nodeBinary = await _getNodeBinary(this.functionsDir, wsConfig && wsConfig.node);
 
-    this.firebaseConfig = wsInitData
-      ? wsInitData.firebaseConfig
+    this.firebaseConfig = wsConfig
+      ? wsConfig.firebaseConfig
       : // TODO: This call requires authentication, which we should remove eventually
         await functionsConfig.getFirebaseConfig(this.options);
 
@@ -245,8 +245,8 @@ export class FunctionsEmulator implements EmulatorInstance {
     if (wsDebugger) {
       runtimeOptions.enhancedLogs = true;
 
-      const wsInitData = await wsDebugger.getInitData();
-      if (wsInitData.functionsDebug) {
+      const wsConfig = await wsDebugger.getConfig();
+      if (wsConfig.functionsDebug) {
         runtimeOptions.inspectorPort = await pf.getPortPromise();
       }
     }
@@ -446,7 +446,33 @@ export function InvokeRuntime(
 
         if (lines.length > 1) {
           lines.slice(0, -1).forEach((line: string) => {
-            const log = EmulatorLog.fromJSON(line);
+            let log = EmulatorLog.fromJSON(line);
+
+            // When debugging is enabled we get the raw output from the function
+            // rather than formatted EmulatorLog JSON messages, in which case
+            // EmulatorLog.fromJSON() can't parse them and returns an error.
+            if (log.level === "ERROR" && opts.inspectorPort) {
+              // Node outputs some debugging information to STDERR.
+              // We need to treat those messages as a special case to avoid showing
+              // them as errors.
+              if (pipe === "stderr" && isNodeDebuggingMessage(line)) {
+                // It's a debug info message from Node.
+                log = new EmulatorLog("DEBUG", "node-debugger", line, {
+                  triggerId: frb.triggerId,
+                });
+              } else {
+                // It's not from Node so it's a regular console.log or
+                // console.error from the function.
+                // Lets create an EmulatorLog instance for it.
+                log = new EmulatorLog(
+                  "USER",
+                  `function-${pipe === "stderr" ? "error" : "log"}`,
+                  line,
+                  { triggerId: frb.triggerId }
+                );
+              }
+            }
+
             emitter.emit("log", log);
 
             if (log.level === "SYSTEM" && log.type === "runtime-status" && log.text === "ready") {
@@ -482,7 +508,7 @@ export function InvokeRuntime(
  */
 async function _getNodeBinary(
   cwd: string,
-  nodeOptions?: WebSocketDebuggerInitData["node"]
+  nodeOptions?: WebSocketDebuggerConfig["node"]
 ): Promise<string> {
   let requestedMajorVersion: string;
 
@@ -573,4 +599,16 @@ async function _getNodeBinary(
   utils.logWarning(`Using node@${requestedMajorVersion} from host.`);
 
   return process.execPath;
+}
+
+const nodeDebugMessagePrefixes = [
+  "Debugger listening on ws:",
+  "For help, see: ",
+  "Debugger attached\\.",
+  "Waiting for the debugger to disconnect",
+];
+const nodeDebugMessageRegex = new RegExp(`^(${nodeDebugMessagePrefixes.join("|")})`);
+
+function isNodeDebuggingMessage(line: string): boolean {
+  return nodeDebugMessageRegex.test(line);
 }

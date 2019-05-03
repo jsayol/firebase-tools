@@ -2,10 +2,12 @@ import * as path from "path";
 import * as WebSocket from "ws";
 import { EventEmitter } from "events";
 
+import * as utils from "../utils";
+
 // tslint:disable-next-line: no-var-requires
 const pkg = require(path.resolve(__dirname, "..", "..", "package.json"));
 
-export interface WebSocketDebuggerInitData {
+export interface WebSocketDebuggerConfig {
   client: {
     name: string;
     version: string;
@@ -19,7 +21,7 @@ export interface WebSocketDebuggerInitData {
   functionsDebug?: boolean;
 }
 
-interface LocalInitData {
+interface LocalConfig {
   version: string;
 }
 
@@ -28,7 +30,7 @@ interface Message {
   payload: any;
 }
 
-type RecvMessageType = "init" | "stop" | "error" | "web-config";
+type RecvMessageType = "init" | "stop" | "error" | "web-config" | "set-debugging-state";
 type SendMessageType =
   | "init"
   | "log"
@@ -41,17 +43,15 @@ type SendMessageType =
   | "functions"
   | "debug-function";
 
-function isValidInitData(
-  initData: WebSocketDebuggerInitData
-): initData is WebSocketDebuggerInitData {
+function isValidConfig(config: WebSocketDebuggerConfig): config is WebSocketDebuggerConfig {
   return (
-    initData.client &&
-    typeof initData.client.name === "string" &&
-    typeof initData.client.version === "string" &&
-    typeof initData.projectNumber === "string" &&
-    !!initData.firebaseConfig &&
-    !!initData.node &&
-    typeof initData.node.installIfMissing === "boolean"
+    config.client &&
+    typeof config.client.name === "string" &&
+    typeof config.client.version === "string" &&
+    typeof config.projectNumber === "string" &&
+    !!config.firebaseConfig &&
+    !!config.node &&
+    typeof config.node.installIfMissing === "boolean"
   );
 }
 
@@ -60,10 +60,11 @@ export class WebSocketDebugger extends EventEmitter {
   private stdoutWrite?: typeof process.stdout._write;
   private stderrWrite?: typeof process.stderr._write;
   private webAppConfig?: { [k: string]: any };
+  private config?: WebSocketDebuggerConfig;
 
   private init: {
-    promise: Promise<WebSocketDebuggerInitData>;
-    resolve: (value?: WebSocketDebuggerInitData | PromiseLike<WebSocketDebuggerInitData>) => void;
+    promise: Promise<WebSocketDebuggerConfig>;
+    resolve: () => void;
     reject: (reason?: any) => void;
   };
 
@@ -83,7 +84,7 @@ export class WebSocketDebugger extends EventEmitter {
     });
 
     this.client.on("open", async () => {
-      const payload: LocalInitData = {
+      const payload: LocalConfig = {
         version: pkg.version,
       };
       await this.sendMessage("init", payload);
@@ -115,16 +116,9 @@ export class WebSocketDebugger extends EventEmitter {
     });
   }
 
-  getInitData(): Promise<WebSocketDebuggerInitData> {
-    return this.init.promise;
-  }
-
-  async getProjectConfig(): Promise<WebSocketDebuggerInitData["firebaseConfig"]> {
-    return (await this.getInitData()).firebaseConfig;
-  }
-
-  async getProjectNumber(): Promise<string> {
-    return (await this.getInitData()).projectNumber;
+  async getConfig(): Promise<WebSocketDebuggerConfig> {
+    await this.init.promise;
+    return this.config!;
   }
 
   async getWebAppConfig(): Promise<{ [k: string]: any }> {
@@ -232,8 +226,12 @@ export class WebSocketDebugger extends EventEmitter {
 
     switch (type) {
       case "init":
-        if (isValidInitData(payload)) {
-          this.init.resolve(payload);
+        if (isValidConfig(payload)) {
+          this.config = payload;
+          this.init.resolve();
+          if (this.config.functionsDebug) {
+            utils.logLabeledBullet("functions", `Debugging enabled.`);
+          }
         } else {
           this.terminate();
         }
@@ -245,7 +243,14 @@ export class WebSocketDebugger extends EventEmitter {
         this.webAppConfig = payload;
         break;
       case "error":
+        // tslint:disable-next-line: no-console
         console.error(payload);
+        this.terminate();
+        break;
+      case "set-debugging-state":
+        await this.init.promise;
+        this.config!.functionsDebug = payload;
+        utils.logLabeledBullet("functions", `Debugging ${payload ? "enabled" : "disabled"}.`);
         break;
       default:
         isValidMessage = false;
