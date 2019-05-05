@@ -63,6 +63,10 @@ export class EmulatorLog {
     );
   }
 
+  static fromObject(obj: { [k: string]: any }): EmulatorLog {
+    return new EmulatorLog(obj.level, obj.type, obj.text, obj.data, obj.timestamp);
+  }
+
   constructor(
     public level: "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL" | "SYSTEM" | "USER",
     public type: string,
@@ -102,5 +106,12 @@ export class EmulatorLog {
     if (wsDebugger) {
       wsDebugger.sendMessage("log", this);
     }
+  }
+
+  send(): void {
+    if (!process.send) {
+      throw new Error("Can't process.send() from a non-child process.");
+    }
+    process.send({ type: "log", log: this.toJSON() });
   }
 }

@@ -253,17 +253,16 @@ export class FunctionsEmulator implements EmulatorInstance {
 
     const runtime = InvokeRuntime(nodeBinary, runtimeBundle, runtimeOptions);
     runtime.events.on("log", (log: EmulatorLog) => {
-      if (wsDebugger && log.data && log.data.skipStdout) {
-        return;
+      if (wsDebugger) {
+        wsDebugger.sendMessage("log", { module: "functions", mode, log });
+        if (log.data && log.data.skipStdout) {
+          return;
+        }
       }
       this.logRuntimeEvent(log);
     });
 
     if (wsDebugger) {
-      runtime.events.on("log", (log: EmulatorLog) => {
-        wsDebugger.sendMessage("log", { module: "functions", mode, log });
-      });
-
       if (runtimeOptions.inspectorPort) {
         try {
           // If the user has transpiled TypeScript files, the debugger won't be
@@ -274,7 +273,9 @@ export class FunctionsEmulator implements EmulatorInstance {
           const pkg = require(path.join(this.functionsDir, "package.json"));
           wsDebugger.sendMessage("debug-function", {
             port: runtimeOptions.inspectorPort,
+            functionsDir: this.functionsDir,
             outDir: path.dirname(path.resolve(this.functionsDir, pkg.main)),
+            cliDir: path.resolve(__dirname, "..", ".."),
           });
         } catch (err) {
           // Something went wrong reading package.json
@@ -295,8 +296,7 @@ export class FunctionsEmulator implements EmulatorInstance {
         // Ignore these for now...
         break;
       case "USER":
-        // TODO(jsayol): uncomment this
-        // logger.info(`${clc.blackBright("> ")} ${log.text}`);
+        logger.info(`${clc.blackBright("> ")} ${log.text}`);
         break;
       case "DEBUG":
         logger.debug(log.text);
@@ -435,57 +435,25 @@ export function InvokeRuntime(
     runtimeArgs.push("--is-debugging");
   }
 
-  const runtime = spawn(nodeBinary, runtimeArgs, { env: opts.env || {} });
+  const runtime = spawn(nodeBinary, runtimeArgs, {
+    env: opts.env || {},
 
-  const buffers: { [pipe: string]: string } = { stderr: "", stdout: "" };
-  for (const pipe in buffers) {
-    if (buffers.hasOwnProperty(pipe)) {
-      (runtime as any)[pipe].on("data", (buf: Buffer) => {
-        buffers[pipe] += buf;
-        const lines = buffers[pipe].split("\n");
+    // The child process captures its own stdout/stderr and sends it
+    // as a formatted EmulatorLog via IPC. No need to capture it here.
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
 
-        if (lines.length > 1) {
-          lines.slice(0, -1).forEach((line: string) => {
-            let log = EmulatorLog.fromJSON(line);
+  runtime.on("message", (message) => {
+    if (message.type === "log") {
+      const log = EmulatorLog.fromObject(message.log);
+      emitter.emit("log", log);
 
-            // When debugging is enabled we get the raw output from the function
-            // rather than formatted EmulatorLog JSON messages, in which case
-            // EmulatorLog.fromJSON() can't parse them and returns an error.
-            if (log.level === "ERROR" && opts.inspectorPort) {
-              // Node outputs some debugging information to STDERR.
-              // We need to treat those messages as a special case to avoid showing
-              // them as errors.
-              if (pipe === "stderr" && isNodeDebuggingMessage(line)) {
-                // It's a debug info message from Node.
-                log = new EmulatorLog("DEBUG", "node-debugger", line, {
-                  triggerId: frb.triggerId,
-                });
-              } else {
-                // It's not from Node so it's a regular console.log or
-                // console.error from the function.
-                // Lets create an EmulatorLog instance for it.
-                log = new EmulatorLog(
-                  "USER",
-                  `function-${pipe === "stderr" ? "error" : "log"}`,
-                  line,
-                  { triggerId: frb.triggerId }
-                );
-              }
-            }
-
-            emitter.emit("log", log);
-
-            if (log.level === "SYSTEM" && log.type === "runtime-status" && log.text === "ready") {
-              metadata.socketPath = log.data.socketPath;
-              readyResolve();
-            }
-          });
-        }
-
-        buffers[pipe] = lines[lines.length - 1];
-      });
+      if (log.level === "SYSTEM" && log.type === "runtime-status" && log.text === "ready") {
+        metadata.socketPath = log.data.socketPath;
+        readyResolve();
+      }
     }
-  }
+  });
 
   return {
     exit: new Promise<number>((resolve, reject) => {
@@ -493,7 +461,7 @@ export function InvokeRuntime(
         if (code === 0) {
           resolve(code);
         } else {
-          reject(buffers.stderr);
+          reject();
         }
       });
     }),
@@ -599,16 +567,4 @@ async function _getNodeBinary(
   utils.logWarning(`Using node@${requestedMajorVersion} from host.`);
 
   return process.execPath;
-}
-
-const nodeDebugMessagePrefixes = [
-  "Debugger listening on ws:",
-  "For help, see: ",
-  "Debugger attached\\.",
-  "Waiting for the debugger to disconnect",
-];
-const nodeDebugMessageRegex = new RegExp(`^(${nodeDebugMessagePrefixes.join("|")})`);
-
-function isNodeDebuggingMessage(line: string): boolean {
-  return nodeDebugMessageRegex.test(line);
 }

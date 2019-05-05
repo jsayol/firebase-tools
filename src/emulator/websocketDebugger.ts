@@ -87,7 +87,7 @@ export class WebSocketDebugger extends EventEmitter {
       const payload: LocalConfig = {
         version: pkg.version,
       };
-      await this.sendMessage("init", payload);
+      await this.sendMessagePromise("init", payload);
     });
 
     this.client.on("message", async (data: string) => {
@@ -98,7 +98,7 @@ export class WebSocketDebugger extends EventEmitter {
       } catch (err) {
         // Couldn't parse the message sent by the server... exTERMINATE!
         // (You have to read that last part with a Dalek voice or it won't be funny)
-        await this.sendMessage("error", { error: err.message, data });
+        await this.sendMessagePromise("error", { error: err.message, data });
         this.terminate();
         return;
       }
@@ -111,7 +111,7 @@ export class WebSocketDebugger extends EventEmitter {
 
     // Close the connection on an unhandled rejection
     process.on("unhandledRejection", async (reason) => {
-      await this.sendMessage("error", { error: "unhandledRejection", data: reason });
+      await this.sendMessagePromise("error", { error: "unhandledRejection", data: reason });
       this.terminate();
     });
   }
@@ -133,14 +133,27 @@ export class WebSocketDebugger extends EventEmitter {
         this.removeListener("error", reject);
       });
       try {
-        await this.sendMessage("get-web-config");
+        await this.sendMessagePromise("get-web-config");
       } catch (err) {
         reject(err);
       }
     });
   }
 
-  sendMessage(type: SendMessageType, payload?: any): Promise<void> {
+  sendMessage(type: SendMessageType, payload?: any): void {
+    const message: Message = { type, payload };
+    this.client.send(JSON.stringify(message), (err?: any) => {
+      if (err) {
+        this.terminate();
+      }
+    });
+  }
+
+  /**
+   * Like sendMessage() but returns a promise that resolves when the message
+   * has been sent successfully, or rejects if sending failed.
+   */
+  sendMessagePromise(type: SendMessageType, payload?: any): Promise<void> {
     return new Promise((resolve) => {
       const message: Message = { type, payload };
       try {
@@ -254,7 +267,7 @@ export class WebSocketDebugger extends EventEmitter {
         break;
       default:
         isValidMessage = false;
-        await this.sendMessage("error", `Unknown message type "${type}"`);
+        await this.sendMessagePromise("error", `Unknown message type "${type}"`);
         this.terminate();
     }
 

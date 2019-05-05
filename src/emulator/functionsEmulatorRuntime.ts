@@ -132,13 +132,13 @@ blocker works). As of this note,
           href,
           module: bundle.module,
           triggerId,
-        }).log();
+        }).send();
       } else {
         new EmulatorLog("SYSTEM", "unidentified-network-access", "", {
           href,
           module: bundle.module,
           triggerId,
-        }).log();
+        }).send();
       }
 
       try {
@@ -156,7 +156,7 @@ blocker works). As of this note,
     "runtime-status",
     "Outgoing network have been stubbed.",
     triggerId ? { results, triggerId } : results
-  ).log();
+  ).send();
 }
 
 function _InitializeFirebaseAdminStubs(
@@ -190,10 +190,10 @@ function _InitializeFirebaseAdminStubs(
   localAdminModule.initializeApp = (opts: any, name: string) => {
     {
       if (name) {
-        new EmulatorLog("SYSTEM", "non-default-admin-app-used", "", { name, triggerId }).log();
+        new EmulatorLog("SYSTEM", "non-default-admin-app-used", "", { name, triggerId }).send();
         return originalInitializeApp(opts, name);
       }
-      new EmulatorLog("SYSTEM", "default-admin-app-used", "", { triggerId }).log();
+      new EmulatorLog("SYSTEM", "default-admin-app-used", "", { triggerId }).send();
       return validApp;
     }
   };
@@ -222,7 +222,7 @@ function _InitializeFunctionsConfigHelper(functionsDir: string, triggerId?: stri
   new EmulatorLog("DEBUG", "runtime-status", "Checked functions.config()", {
     config: ff.config(),
     triggerId,
-  }).log();
+  }).send();
 
   const serviceProxy = new Proxy(config, {
     get(target, name): any {
@@ -245,7 +245,7 @@ function _InitializeFunctionsConfigHelper(functionsDir: string, triggerId?: stri
                 )}" for information on how to set runtime configuration values in the emulator, \
 see https://firebase.google.com/docs/functions/local-emulator`,
                 { triggerId }
-              ).log();
+              ).send();
               return undefined;
             }
           },
@@ -272,7 +272,7 @@ async function _ProcessHTTPS(
         "runtime-status",
         `Ephemeral server used!`,
         enhancedLogs ? { triggerId: trigger.definition.name } : undefined
-      ).log();
+      ).send();
       const func = trigger.getRawFunction();
 
       res.on("finish", () => {
@@ -289,7 +289,7 @@ async function _ProcessHTTPS(
             "runtime-status",
             `Detected JSON request body: ${dataStr}`,
             enhancedLogs ? { triggerId: trigger.definition.name } : undefined
-          ).log();
+          ).send();
           req.body = JSON.parse(dataStr);
         } else {
           req.body = dataStr;
@@ -306,7 +306,7 @@ async function _ProcessHTTPS(
       new EmulatorLog("SYSTEM", "runtime-status", "ready", {
         socketPath,
         triggerId: enhancedLogs ? trigger.definition.name : undefined,
-      }).log();
+      }).send();
     });
   });
 }
@@ -323,7 +323,7 @@ async function _ProcessBackground(
     "runtime-status",
     "ready",
     enhancedLogs ? { triggerId: trigger.definition.name } : undefined
-  ).log();
+  ).send();
   const { Change } = require("firebase-functions");
 
   const newSnap =
@@ -361,7 +361,7 @@ async function _ProcessBackground(
     "runtime-status",
     `Requesting a wrapped function.`,
     enhancedLogs ? { triggerId: trigger.definition.name } : undefined
-  ).log();
+  ).send();
   const func = trigger.getWrappedFunction();
 
   await Run([data, ctx], func, enhancedLogs, isDebugging, trigger.definition.name);
@@ -386,53 +386,125 @@ async function Run(
     maxArrayLength: Infinity,
   };
 
-  /* tslint:disable:no-console */
+  // We toggle this flag when we want to momentarily stop
+  // capturing stdout/stderr while debugging.
+  let ignoreOutput = false;
 
+  const buffers: { stdout: string; stderr: string } = {
+    stdout: "",
+    stderr: "",
+  };
+
+  function processOutput(pipe: "stdout" | "stderr", chunk: string): void {
+    buffers[pipe] += chunk;
+    let newlineIndex = buffers[pipe].indexOf("\n");
+
+    while (newlineIndex >= 0) {
+      // `line` includes a newline at the end
+      const line = buffers[pipe].slice(0, newlineIndex + 1);
+      if (!ignoreOutput) {
+        new EmulatorLog(
+          "USER",
+          "function-" + pipe,
+          line,
+          enhancedLogs ? { triggerId, skipStdout: true } : undefined
+        ).send();
+      }
+      buffers[pipe] = buffers[pipe].slice(newlineIndex + 1);
+      newlineIndex = buffers[pipe].indexOf("\n");
+    }
+  }
+
+  function flushRemainingBuffers(): void {
+    for (const pipe in buffers) {
+      if (Object.prototype.hasOwnProperty.call(buffers, pipe)) {
+        const buffer = buffers[pipe as keyof typeof buffers];
+        if (buffer.length > 0) {
+          new EmulatorLog(
+            "USER",
+            "function-" + pipe,
+            buffer,
+            enhancedLogs ? { triggerId, skipStdout: true } : undefined
+          ).send();
+        }
+      }
+    }
+  }
+
+  /* tslint:disable:no-console */
   const originalConsoleFn = {
     log: console.log,
     info: console.info,
+    warn: console.warn,
     error: console.error,
   };
+  /* tslint:enable:no-console */
 
-  if (!isDebugging) {
-    const consoleFn = (type: "log" | "error") => (...messages: any[]) => {
-      const content = messages
-        .map((message: any) => {
-          return !enhancedLogs || typeof message === "string"
-            ? message
-            : util.inspect(message, inspectOptions);
-        })
-        .join(" ");
-      new EmulatorLog(
-        "USER",
-        "function-" + type,
-        content,
-        enhancedLogs ? { triggerId } : undefined
-      ).log();
-    };
+  type ConsoleMethod = keyof typeof originalConsoleFn;
 
-    console.log = consoleFn("log");
-    console.info = consoleFn("log");
-    if (enhancedLogs) {
-      console.error = consoleFn("error");
+  // TODO(jsayol): with "enhancedLogs", send the raw arguments rather than a string.
+  const consoleFn = (type: "log" | "error", method: ConsoleMethod) => (...messages: any[]) => {
+    const content = messages
+      .map((message: any) => {
+        return !enhancedLogs || typeof message === "string"
+          ? message
+          : util.inspect(message, inspectOptions);
+      })
+      .join(" ");
+    new EmulatorLog(
+      "USER",
+      "function-" + type,
+      content,
+      enhancedLogs ? { triggerId, skipStdout: true } : undefined
+    ).send();
+
+    if (isDebugging) {
+      ignoreOutput = true;
+      originalConsoleFn[method](...messages);
+      ignoreOutput = false;
     }
-  }
+  };
+
+  /* tslint:disable:no-console */
+  console.log = consoleFn("log", "log");
+  console.info = consoleFn("log", "info");
+  console.warn = consoleFn("error", "warn");
+  console.error = consoleFn("error", "error");
+  /* tslint:enable:no-console */
+
+  const stdoutWrite = process.stdout._write;
+  const stderrWrite = process.stderr._write;
+
+  process.stdout._write = (chunk, encoding, done) => {
+    processOutput("stdout", chunk);
+    done();
+  };
+
+  process.stderr._write = (chunk, encoding, done) => {
+    processOutput("stderr", chunk);
+    done();
+  };
+
+  process.on("exit", () => {
+    flushRemainingBuffers();
+  });
 
   let caughtErr;
   try {
     await func(args[0], args[1]);
   } catch (err) {
     caughtErr = err;
-    console.warn(caughtErr);
   }
 
-  if (!isDebugging) {
-    console.log = originalConsoleFn.log;
-    console.info = originalConsoleFn.info;
-    console.error = originalConsoleFn.error;
-  }
-
+  /* tslint:disable:no-console */
+  console.log = originalConsoleFn.log;
+  console.info = originalConsoleFn.info;
+  console.warn = originalConsoleFn.warn;
+  console.error = originalConsoleFn.error;
   /* tslint:enable:no-console */
+
+  process.stdout._write = stdoutWrite;
+  process.stderr._write = stderrWrite;
 
   if (caughtErr) {
     new EmulatorLog(
@@ -440,7 +512,7 @@ async function Run(
       "function-log",
       caughtErr.stack,
       enhancedLogs ? { triggerId } : undefined
-    ).log();
+    ).send();
   }
 
   return;
@@ -481,17 +553,17 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       node_version: process.versions.node,
       triggerId: frb.triggerId,
-    }).log();
+    }).send();
   } else {
     new EmulatorLog("DEBUG", "runtime-status", "Functions runtime initialized.", {
       cwd: process.cwd(),
       node_version: process.versions.node,
-    }).log();
+    }).send();
 
     frb = JSON.parse(serializedFunctionsRuntimeBundle) as FunctionsRuntimeBundle;
   }
 
-  new EmulatorLog("DEBUG", "runtime-status", "FunctionsRuntimeBundle parsed", frb).log();
+  new EmulatorLog("DEBUG", "runtime-status", "FunctionsRuntimeBundle parsed", frb).send();
 
   _InitializeEnvironmentalVariables(frb.projectId);
   if (isFeatureEnabled(frb, "network_filtering")) {
@@ -515,7 +587,7 @@ async function main(): Promise<void> {
       "runtime-status",
       "Could not initialize stubbed admin app.",
       enhancedLogs ? { triggerId: frb.triggerId } : undefined
-    ).log();
+    ).send();
     return process.exit();
   }
 
@@ -549,7 +621,7 @@ async function main(): Promise<void> {
       "runtime-status",
       `Could not find trigger "${frb.triggerId}" in your functions directory.`,
       enhancedLogs ? { triggerId: frb.triggerId } : undefined
-    ).log();
+    ).send();
     return;
   } else {
     new EmulatorLog(
@@ -557,7 +629,7 @@ async function main(): Promise<void> {
       "runtime-status",
       `Trigger "${frb.triggerId}" has been found, beginning invocation!`,
       enhancedLogs ? { triggerId: frb.triggerId } : undefined
-    ).log();
+    ).send();
   }
 
   if (enhancedLogs) {
@@ -569,7 +641,7 @@ async function main(): Promise<void> {
         triggerId: frb.triggerId,
         skipStdout: true,
       }
-    ).log();
+    ).send();
   }
 
   const trigger = triggers[frb.triggerId];
@@ -585,12 +657,11 @@ async function main(): Promise<void> {
         }. To configure this timeout, see
       https://firebase.google.com/docs/functions/manage-functions#set_timeout_and_memory_allocation.`,
         enhancedLogs ? { triggerId: frb.triggerId } : undefined
-      ).log();
+      ).send();
       process.exit();
     }, trigger.timeout);
   }
 
-  // Note: for finer duration (ns) use `performance` from `perf_hooks` Node module
   const startTime = Date.now();
 
   switch (frb.mode) {
@@ -620,7 +691,7 @@ async function main(): Promise<void> {
     "runtime-status",
     `Function ${frb.triggerId} finished in ${duration}.`,
     enhancedLogs ? { triggerId: frb.triggerId, skipStdout: true } : undefined
-  ).log();
+  ).send();
 }
 
 if (require.main === module) {

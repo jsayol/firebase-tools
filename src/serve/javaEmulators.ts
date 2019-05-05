@@ -134,7 +134,7 @@ async function _runBinary(
         while (newlineIndex >= 0) {
           // `line` includes a newline at the end
           const line = buffered[from].slice(0, newlineIndex + 1);
-          await wsDebugger.sendMessage("log", {
+          await wsDebugger.sendMessagePromise("log", {
             module: emulator.name,
             from,
             line,

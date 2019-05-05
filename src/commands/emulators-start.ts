@@ -91,7 +91,7 @@ async function startEmulator(
 
     const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
     if (wsDebugger) {
-      await wsDebugger.sendMessage("emulator-port-taken", { name, addr });
+      await wsDebugger.sendMessagePromise("emulator-port-taken", { name, addr });
     }
 
     return utils.reject(`Could not start ${name} emulator, port taken.`, {});
