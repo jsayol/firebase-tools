@@ -1,6 +1,6 @@
 import { ALL_EMULATORS, EmulatorInstance, Emulators } from "./types";
 import * as FirebaseError from "../error";
-import { WebSocketDebugger } from "./websocketDebugger";
+import { WebSocketDebugger, WebSocketDebuggerConfig } from "./websocketDebugger";
 
 /**
  * Static registry for running emulators to discover each other.
@@ -14,7 +14,13 @@ export class EmulatorRegistry {
       throw new FirebaseError(`Emulator ${instance.getName()} is already running!`, {});
     }
 
-    await instance.start();
+    const wsDebugger = this.getWebSocketDebugger();
+    let wsConfig: WebSocketDebuggerConfig | undefined;
+    if (wsDebugger) {
+      wsConfig = await wsDebugger.getConfig();
+    }
+
+    await instance.start(wsConfig);
     this.set(instance.getName(), instance);
   }
 
@@ -56,6 +62,7 @@ export class EmulatorRegistry {
     return instance.getInfo().port;
   }
 
+  // TODO(jsayol): these methods should probably go somewhere else
   static setWebSocketDebugger(wsDebugger: WebSocketDebugger): void {
     EmulatorRegistry.WS_DEBUGGER = wsDebugger;
   }

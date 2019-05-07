@@ -1,8 +1,6 @@
-"use strict";
-
 import { Emulators, JavaEmulatorCommand, JavaEmulatorDetails } from "../emulator/types";
-import { EmulatorRegistry } from "../emulator/registry";
 import { Constants } from "../emulator/constants";
+import { EmulatorRegistry } from "../emulator/registry";
 
 import * as FirebaseError from "../error";
 import * as childProcess from "child_process";
@@ -153,13 +151,10 @@ async function _runBinary(
       });
     } else {
       emulator.instance.stdout.on("data", (data) => {
-        // TODO: Enable this if --debug is passed
-        // process.stdout.write(data.toString());
-        emulator.stdout.write(data.toString());
+        logger.debug(data.toString());
       });
       emulator.instance.stderr.on("data", (data) => {
-        emulator.stdout.write(data.toString());
-        utils.logWarning(emulator.name + ": " + data.toString());
+        logger.debug(data.toString());
       });
     }
 

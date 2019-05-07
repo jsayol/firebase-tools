@@ -2,7 +2,7 @@ import { ChildProcess } from "child_process";
 import { WebSocketDebuggerConfig } from "./websocketDebugger";
 import { EmulatorRegistry } from "./registry";
 
-export const enum Emulators {
+export enum Emulators {
   FUNCTIONS = "functions",
   FIRESTORE = "firestore",
   DATABASE = "database",
