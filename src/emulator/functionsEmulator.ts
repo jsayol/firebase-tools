@@ -4,6 +4,7 @@ import * as express from "express";
 import * as request from "request";
 import * as clc from "cli-color";
 import * as http from "http";
+import * as pf from "portfinder";
 
 import * as getProjectId from "../getProjectId";
 import * as functionsConfig from "../functionsConfig";
@@ -26,6 +27,7 @@ import {
 } from "./functionsEmulatorShared";
 import { EmulatorRegistry } from "./registry";
 import { EventEmitter } from "events";
+import { WebSocketDebuggerConfig } from "./websocketDebugger";
 import * as stream from "stream";
 
 const EVENT_INVOKE = "functions:invoke";
@@ -73,22 +75,24 @@ export class FunctionsEmulator implements EmulatorInstance {
     this.projectId = getProjectId(this.options, false);
   }
 
-  async start(): Promise<void> {
+  async start(wsConfig?: WebSocketDebuggerConfig): Promise<void> {
     this.functionsDir = path.join(
       this.options.config.projectDir,
       this.options.config.get("functions.source")
     );
 
-    this.nodeBinary = await askInstallNodeVersion(this.functionsDir);
+    this.nodeBinary = await askInstallNodeVersion(this.functionsDir, wsConfig && wsConfig.node);
 
-    // TODO: This call requires authentication, which we should remove eventually
-    this.firebaseConfig = await functionsConfig.getFirebaseConfig(this.options);
+    this.firebaseConfig = wsConfig
+      ? wsConfig.firebaseConfig
+      : // TODO: This call requires authentication, which we should remove eventually
+        await functionsConfig.getFirebaseConfig(this.options);
 
     const hub = express();
 
     hub.use((req, res, next) => {
       // Allow CORS to facilitate easier testing.
-      // Source: https://enable-cors.org/server_expressjCannot understand what targets to deploys.html
+      // Source: https://enable-cors.org/server_expressjs.html
       res.header("Access-Control-Allow-Origin", "*");
       res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
 
@@ -137,7 +141,7 @@ export class FunctionsEmulator implements EmulatorInstance {
       const reqBody = (req as RequestWithRawBody).rawBody;
       const proto = reqBody ? JSON.parse(reqBody) : undefined;
 
-      const runtime = this.startFunctionRuntime(triggerName, proto);
+      const runtime = await this.startFunctionRuntime(triggerName, proto);
 
       runtime.events.on("log", (el: EmulatorLog) => {
         if (el.level === "FATAL") {
@@ -249,7 +253,7 @@ export class FunctionsEmulator implements EmulatorInstance {
     this.server = hub.listen(this.port);
   }
 
-  startFunctionRuntime(triggerName: string, proto?: any): FunctionsRuntimeInstance {
+  async startFunctionRuntime(triggerName: string, proto?: any): Promise<FunctionsRuntimeInstance> {
     const runtimeBundle: FunctionsRuntimeBundle = {
       ports: {
         firestore: EmulatorRegistry.getPort(Emulators.FIRESTORE),
@@ -261,8 +265,45 @@ export class FunctionsEmulator implements EmulatorInstance {
       disabled_features: this.args.disabledRuntimeFeatures,
     };
 
-    const runtime = InvokeRuntime(this.nodeBinary, runtimeBundle);
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    const runtimeOptions: InvokeRuntimeOptions = {};
+
+    if (wsDebugger) {
+      runtimeOptions.enhancedLogs = true;
+
+      const wsConfig = await wsDebugger.getConfig();
+      if (wsConfig.functionsDebug) {
+        runtimeOptions.inspectorPort = await pf.getPortPromise();
+      }
+    }
+
+    const runtime = InvokeRuntime(this.nodeBinary, runtimeBundle, runtimeOptions);
     runtime.events.on("log", this.handleRuntimeLog.bind(this));
+
+    if (wsDebugger && runtimeOptions.inspectorPort) {
+      // Tell the WS Debugger that debugging has started for a function invocation
+      try {
+        // If the user has transpiled TypeScript files, the debugger won't be
+        // able to find them unless we tell it where those files are.
+        // To ensure debugging works in all cases we need to get the path to
+        // the directory that contains the JS files. We get it from the
+        // "main" property from package.json
+        const pkg = require(path.join(this.functionsDir, "package.json"));
+        wsDebugger.sendMessage("debug-function", {
+          port: runtimeOptions.inspectorPort,
+          functionsDir: this.functionsDir,
+          outDir: path.dirname(path.resolve(this.functionsDir, pkg.main)),
+          cliDir: path.resolve(__dirname, "..", ".."),
+        });
+      } catch (err) {
+        // Something went wrong reading package.json
+        utils.logWarning(
+          "Failed to get information to initialize the Node debugger: " + err && err.message,
+          "error"
+        );
+      }
+    }
+
     return runtime;
   }
 
@@ -339,9 +380,18 @@ You can probably fix this by running "npm install ${
   }
 
   handleRuntimeLog(log: EmulatorLog, ignore: string[] = []): void {
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      wsDebugger.sendMessage("log", { module: "functions", log });
+      if (log.data && log.data.skipStdout) {
+        return;
+      }
+    }
+
     if (ignore.indexOf(log.level) >= 0) {
       return;
     }
+
     switch (log.level) {
       case "SYSTEM":
         this.handleSystemLog(log);
@@ -402,6 +452,11 @@ You can probably fix this by running "npm install ${
         (definition) => !this.knownTriggerIDs[definition.name]
       );
 
+      const initializedTriggers: { [k: string]: EmulatedTriggerDefinition[] } = {
+        https: [],
+        firestore: [],
+      };
+
       for (const definition of toSetup) {
         if (definition.httpsTrigger) {
           // TODO(samstern): Right now we only emulate each function in one region, but it's possible
@@ -414,11 +469,13 @@ You can probably fix this by running "npm install ${
             region
           );
           utils.logLabeledBullet("functions", `HTTP trigger initialized at ${clc.bold(url)}`);
+          initializedTriggers.https.push(definition);
         } else {
           const service: string = _.get(definition, "eventTrigger.service", "unknown");
           switch (service) {
             case SERVICE_FIRESTORE:
               await this.addFirestoreTrigger(this.projectId, definition);
+              initializedTriggers.firestore.push(definition);
               break;
             default:
               logger.debug(`Unsupported trigger: ${JSON.stringify(definition)}`);
@@ -431,6 +488,11 @@ You can probably fix this by running "npm install ${
           }
         }
         this.knownTriggerIDs[definition.name] = true;
+      }
+
+      const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+      if (wsDebugger) {
+        wsDebugger.sendMessage("functions", initializedTriggers);
       }
     };
 
@@ -502,59 +564,58 @@ You can probably fix this by running "npm install ${
   }
 }
 
+interface InvokeRuntimeOptions {
+  serializedTriggers?: string;
+  env?: { [key: string]: string };
+  enhancedLogs?: boolean;
+  inspectorPort?: number;
+}
+
 export function InvokeRuntime(
   nodeBinary: string,
   frb: FunctionsRuntimeBundle,
-  opts?: { serializedTriggers?: string; env?: { [key: string]: string } }
+  opts: InvokeRuntimeOptions = {}
 ): FunctionsRuntimeInstance {
-  opts = opts || {};
-
   const emitter = new EventEmitter();
   const metadata: { [key: string]: any } = {};
-  const runtime = spawn(
-    nodeBinary,
-    [
-      // "--no-warnings",
-      path.join(__dirname, "functionsEmulatorRuntime"),
-      JSON.stringify(frb),
-      opts.serializedTriggers || "",
-    ],
-    { env: { node: nodeBinary, ...opts.env }, cwd: frb.cwd }
-  );
+  const runtimeArgs = [
+    // "--no-warnings",
+    path.join(__dirname, "functionsEmulatorRuntime"),
+    JSON.stringify(frb),
+    opts.serializedTriggers || "",
+  ];
 
-  const buffers: {
-    [pipe: string]: {
-      pipe: stream.Readable;
-      value: string;
-    };
-  } = { stderr: { pipe: runtime.stderr, value: "" }, stdout: { pipe: runtime.stdout, value: "" } };
-
-  for (const id in buffers) {
-    if (buffers.hasOwnProperty(id)) {
-      const buffer = buffers[id];
-      buffer.pipe.on("data", (buf: Buffer) => {
-        buffer.value += buf;
-        const lines = buffer.value.split("\n");
-
-        if (lines.length > 1) {
-          lines.slice(0, -1).forEach((line: string) => {
-            const log = EmulatorLog.fromJSON(line);
-            emitter.emit("log", log);
-
-            if (log.level === "FATAL") {
-              /*
-              Something went wrong, if we don't kill the process it'll wait for timeoutMs.
-               */
-              emitter.emit("log", new EmulatorLog("SYSTEM", "runtime-status", "killed"));
-              runtime.kill();
-            }
-          });
-        }
-
-        buffer.value = lines[lines.length - 1];
-      });
-    }
+  if (opts.enhancedLogs) {
+    runtimeArgs.push("--enhance-logs");
   }
+
+  if (opts.inspectorPort) {
+    runtimeArgs.splice(0, 0, "--inspect-brk=" + opts.inspectorPort);
+    runtimeArgs.push("--is-debugging");
+  }
+
+  const runtime = spawn(nodeBinary, runtimeArgs, {
+    env: { node: nodeBinary, ...opts.env },
+
+    // The child process captures its own stdout/stderr and sends it
+    // as a formatted EmulatorLog via IPC. No need to capture it here.
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+
+  runtime.on("message", (message) => {
+    if (message.type === "log") {
+      const log = EmulatorLog.fromObject(message.log);
+      emitter.emit("log", log);
+
+      if (log.level === "FATAL") {
+        /*
+        Something went wrong, if we don't kill the process it'll wait for timeoutMs.
+         */
+        emitter.emit("log", new EmulatorLog("SYSTEM", "runtime-status", "killed"));
+        runtime.kill();
+      }
+    }
+  });
 
   const ready = waitForLog(emitter, "SYSTEM", "runtime-status", (log) => {
     return log.text === "ready";
@@ -579,7 +640,7 @@ function waitForLog(
   filter?: (el: EmulatorLog) => boolean
 ): Promise<EmulatorLog> {
   return new Promise((resolve, reject) => {
-    emitter.on("log", (el: EmulatorLog) => {
+    const listener = (el: EmulatorLog) => {
       const levelTypeMatch = el.level === level && el.type === type;
       let filterMatch = true;
       if (filter) {
@@ -587,29 +648,41 @@ function waitForLog(
       }
 
       if (levelTypeMatch && filterMatch) {
+        emitter.off("log", listener);
         resolve(el);
       }
-    });
+    };
+    emitter.on("log", listener);
   });
 }
 
 /**
  * Returns the path to a "node" executable to use.
  */
-async function askInstallNodeVersion(cwd: string): Promise<string> {
-  const pkg = require(path.join(cwd, "package.json"));
+async function askInstallNodeVersion(
+  cwd: string,
+  nodeOptions?: WebSocketDebuggerConfig["node"]
+): Promise<string> {
+  let requestedMajorVersion: string;
 
-  // If the developer hasn't specified a Node to use, inform them that it's an option and use default
-  if (!pkg.engines || !pkg.engines.node) {
-    utils.logWarning(
-      "Your functions directory does not specify a Node version.\n   " +
-        "- Learn more at https://firebase.google.com/docs/functions/manage-functions#set_runtime_options"
-    );
-    return process.execPath;
+  if (nodeOptions && nodeOptions.useVersion) {
+    requestedMajorVersion = nodeOptions.useVersion;
+  } else {
+    const pkg = require(path.join(cwd, "package.json"));
+
+    // If the developer hasn't specified a Node to use, inform them that it's an option and use default
+    if (!pkg.engines || !pkg.engines.node) {
+      utils.logWarning(
+        "Your functions directory does not specify a Node version.\n   " +
+          "- Learn more at https://firebase.google.com/docs/functions/manage-functions#set_runtime_options"
+      );
+      return process.execPath;
+    }
+
+    requestedMajorVersion = pkg.engines.node;
   }
 
   const hostMajorVersion = process.versions.node.split(".")[0];
-  const requestedMajorVersion = pkg.engines.node;
   let localMajorVersion = "0";
   const localNodePath = path.join(cwd, "node_modules/.bin/node");
 
@@ -640,6 +713,43 @@ async function askInstallNodeVersion(cwd: string): Promise<string> {
   utils.logWarning(
     `Your requested "node" version "${requestedMajorVersion}" doesn't match your global version "${hostMajorVersion}"`
   );
+
+  // let install: boolean;
+
+  // if (nodeOptions) {
+  //   install = nodeOptions.installIfMissing;
+  // } else {
+  //   utils.logBullet(
+  //     `We can install node@${requestedMajorVersion} to "node_modules" without impacting your global "node" install`
+  //   );
+  //   const response = await prompt({}, [
+  //     {
+  //       name: "node_install",
+  //       type: "confirm",
+  //       message: ` Would you like to setup Node ${requestedMajorVersion} for these functions?`,
+  //       default: true,
+  //     },
+  //   ]);
+
+  //   install = response.node_install;
+  // }
+
+  // // If they say yes, install their requested major version locally
+  // if (install) {
+  //   await spawnSync("npm", ["install", `node@${requestedMajorVersion}`, "--save-dev"], {
+  //     cwd,
+  //     stdio: "inherit",
+  //   });
+  //   // TODO(abehaskins): Switching Node versions can result in node-gyp errors, run a rebuild after switching
+  //   //                   versions and probably on exit to original node version
+  //   // TODO(abehaskins): Certain npm commands appear to mess up npm globally, maybe
+  //   //                   remove node_modules/.bin/node to avoid this?
+
+  //   return localNodePath;
+  // }
+
+  // // If they say no, just warn them about using host version and continue on.
+  // utils.logWarning(`Using node@${requestedMajorVersion} from host.`);
 
   return process.execPath;
 }

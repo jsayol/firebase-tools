@@ -1,6 +1,7 @@
 import * as _ from "lodash";
 import * as clc from "cli-color";
 import * as pf from "portfinder";
+import * as stream from "stream";
 
 import * as utils from "../utils";
 import * as track from "../track";
@@ -52,6 +53,11 @@ export async function startEmulator(instance: EmulatorInstance): Promise<void> {
   // TODO(samstern): This check should only occur when the host is localhost
   const portOpen = await checkPortOpen(info.port);
   if (!portOpen) {
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      wsDebugger.sendMessage("emulator-port-taken", { name, info });
+    }
+
     await cleanShutdown();
     utils.logWarning(`Port ${info.port} is not open, could not start ${name} emulator.`);
     utils.logBullet(`To select a different port for the emulator, update your "firebase.json":
@@ -156,11 +162,47 @@ export async function startAll(options: any): Promise<void> {
   }
 
   if (targets.indexOf(Emulators.HOSTING) > -1) {
+    let hostingOptions = options;
+
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      options.webAppConfig = await wsDebugger.getWebAppConfig();
+
+      let buffered = "";
+      const debugStream = new stream.Writable();
+      debugStream._write = (
+        chunk: any,
+        encoding: string,
+        done: (error?: Error | null) => void
+      ): void => {
+        buffered += chunk.toString();
+        let newlineIndex = buffered.indexOf("\n");
+
+        while (newlineIndex >= 0) {
+          // `line` includes a newline at the end
+          const line = buffered.slice(0, newlineIndex + 1);
+          wsDebugger.sendMessage("log", {
+            module: "hosting",
+            line,
+          });
+          buffered = buffered.slice(newlineIndex + 1);
+          newlineIndex = buffered.indexOf("\n");
+        }
+
+        done();
+      };
+
+      hostingOptions = {
+        ...hostingOptions,
+        debugStream,
+      };
+    }
+
     const hostingAddr = Constants.getAddress(Emulators.HOSTING, options);
     const hostingEmulator = new HostingEmulator({
       host: hostingAddr.host,
       port: hostingAddr.port,
-      options,
+      options: hostingOptions,
     });
 
     await startEmulator(hostingEmulator);

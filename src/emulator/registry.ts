@@ -3,6 +3,7 @@ import * as clc from "cli-color";
 import { ALL_EMULATORS, EmulatorInstance, Emulators } from "./types";
 import * as FirebaseError from "../error";
 import * as utils from "../utils";
+import { WebSocketDebugger, WebSocketDebuggerConfig } from "./websocketDebugger";
 
 /**
  * Static registry for running emulators to discover each other.
@@ -16,7 +17,13 @@ export class EmulatorRegistry {
       throw new FirebaseError(`Emulator ${instance.getName()} is already running!`, {});
     }
 
-    await instance.start();
+    const wsDebugger = this.getWebSocketDebugger();
+    let wsConfig: WebSocketDebuggerConfig | undefined;
+    if (wsDebugger) {
+      wsConfig = await wsDebugger.getConfig();
+    }
+
+    await instance.start(wsConfig);
     this.set(instance.getName(), instance);
 
     const info = instance.getInfo();
@@ -64,7 +71,22 @@ export class EmulatorRegistry {
     return instance.getInfo().port;
   }
 
+  // TODO(jsayol): these methods should probably go somewhere else
+  static setWebSocketDebugger(wsDebugger: WebSocketDebugger): void {
+    EmulatorRegistry.WS_DEBUGGER = wsDebugger;
+  }
+
+  static getWebSocketDebugger(): WebSocketDebugger | void {
+    return EmulatorRegistry.WS_DEBUGGER;
+  }
+
+  static hasWebSocketDebugger(): boolean {
+    return EmulatorRegistry.WS_DEBUGGER !== undefined;
+  }
+
   private static INSTANCES: Map<Emulators, EmulatorInstance> = new Map();
+
+  private static WS_DEBUGGER?: WebSocketDebugger;
 
   private static set(emulator: Emulators, instance: EmulatorInstance): void {
     this.INSTANCES.set(emulator, instance);

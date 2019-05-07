@@ -1,4 +1,6 @@
 import { ChildProcess } from "child_process";
+import { WebSocketDebuggerConfig } from "./websocketDebugger";
+import { EmulatorRegistry } from "./registry";
 
 export enum Emulators {
   FUNCTIONS = "functions",
@@ -21,7 +23,7 @@ export interface EmulatorInstance {
    *
    * Note: you should almost always call EmulatorRegistry.start() instead of this method.
    */
-  start(): Promise<void>;
+  start(wsConfig?: WebSocketDebuggerConfig): Promise<void>;
 
   /**
    * Called to tell the emulator to connect to other running emulators.
@@ -106,6 +108,10 @@ export class EmulatorLog {
     );
   }
 
+  static fromObject(obj: { [k: string]: any }): EmulatorLog {
+    return new EmulatorLog(obj.level, obj.type, obj.text, obj.data, obj.timestamp);
+  }
+
   constructor(
     public level: "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL" | "SYSTEM" | "USER",
     public type: string,
@@ -118,13 +124,17 @@ export class EmulatorLog {
   }
 
   toString(): string {
-    return JSON.stringify({
+    return JSON.stringify(this.toJSON());
+  }
+
+  toJSON(): any {
+    return {
       timestamp: this.timestamp,
       level: this.level,
       text: this.text,
       data: this.data,
       type: this.type,
-    });
+    };
   }
 
   get date(): Date {
@@ -136,5 +146,17 @@ export class EmulatorLog {
 
   log(): void {
     process.stdout.write(`${this.toString()}\n`);
+
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      wsDebugger.sendMessage("log", this);
+    }
+  }
+
+  send(): void {
+    if (!process.send) {
+      throw new Error("Can't process.send() from a non-child process.");
+    }
+    process.send({ type: "log", log: this.toJSON() });
   }
 }

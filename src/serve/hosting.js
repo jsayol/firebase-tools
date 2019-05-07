@@ -19,6 +19,7 @@ var server;
 function _startServer(options, config, port, init) {
   server = superstatic({
     debug: true,
+    debugStream: options.debugStream,
     port: port,
     host: options.host,
     config: config,

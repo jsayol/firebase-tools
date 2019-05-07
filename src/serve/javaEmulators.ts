@@ -1,5 +1,6 @@
 import { Emulators, JavaEmulatorCommand, JavaEmulatorDetails } from "../emulator/types";
 import { Constants } from "../emulator/constants";
+import { EmulatorRegistry } from "../emulator/registry";
 
 import * as FirebaseError from "../error";
 import * as childProcess from "child_process";
@@ -109,12 +110,53 @@ async function _runBinary(
 
     utils.logLabeledBullet(emulator.name, `Logging to ${clc.bold(_getLogFileName(emulator.name))}`);
 
-    emulator.instance.stdout.on("data", (data) => {
-      logger.debug(data.toString());
-    });
-    emulator.instance.stderr.on("data", (data) => {
-      logger.debug(data.toString());
-    });
+    const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
+    if (wsDebugger) {
+      const { instance, stdout, ...emulatorDetails } = emulator;
+
+      wsDebugger.sendMessage("emulator-pid", {
+        pid: emulator.instance.pid,
+        emulator: emulatorDetails,
+        command,
+      });
+
+      const buffered: { stdout: string; stderr: string } = {
+        stdout: "",
+        stderr: "",
+      };
+
+      const processOutput = async (from: "stdout" | "stderr", chunk: string): Promise<void> => {
+        buffered[from] += chunk;
+        let newlineIndex = buffered[from].indexOf("\n");
+
+        while (newlineIndex >= 0) {
+          // `line` includes a newline at the end
+          const line = buffered[from].slice(0, newlineIndex + 1);
+          await wsDebugger.sendMessagePromise("log", {
+            module: emulator.name,
+            from,
+            line,
+          });
+          buffered[from] = buffered[from].slice(newlineIndex + 1);
+          newlineIndex = buffered[from].indexOf("\n");
+        }
+      };
+
+      emulator.instance.stdout.on("data", async (data: Buffer | string) => {
+        await processOutput("stdout", data instanceof Buffer ? data.toString() : data);
+      });
+
+      emulator.instance.stderr.on("data", async (data: Buffer | string) => {
+        await processOutput("stderr", data instanceof Buffer ? data.toString() : data);
+      });
+    } else {
+      emulator.instance.stdout.on("data", (data) => {
+        logger.debug(data.toString());
+      });
+      emulator.instance.stderr.on("data", (data) => {
+        logger.debug(data.toString());
+      });
+    }
 
     emulator.instance.on("error", (err: any) => {
       if (err.path === "java" && err.code === "ENOENT") {
