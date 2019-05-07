@@ -1,5 +1,8 @@
+import * as clc from "cli-color";
+
 import { ALL_EMULATORS, EmulatorInstance, Emulators } from "./types";
 import * as FirebaseError from "../error";
+import * as utils from "../utils";
 import { WebSocketDebugger, WebSocketDebuggerConfig } from "./websocketDebugger";
 
 /**
@@ -22,6 +25,12 @@ export class EmulatorRegistry {
 
     await instance.start(wsConfig);
     this.set(instance.getName(), instance);
+
+    const info = instance.getInfo();
+    utils.logLabeledSuccess(
+      instance.getName(),
+      `Emulator started at ${clc.bold.underline(`http://${info.host}:${info.port}`)}`
+    );
   }
 
   static async stop(name: Emulators): Promise<void> {

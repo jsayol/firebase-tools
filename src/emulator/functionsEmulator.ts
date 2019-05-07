@@ -21,6 +21,7 @@ import {
   EmulatedTriggerDefinition,
   EmulatedTriggerMap,
   FunctionsRuntimeBundle,
+  FunctionsRuntimeFeatures,
   getFunctionRegion,
   getTriggersFromDirectory,
 } from "./functionsEmulatorShared";
@@ -36,6 +37,7 @@ const SERVICE_FIRESTORE = "firestore.googleapis.com";
 interface FunctionsEmulatorArgs {
   port?: number;
   host?: string;
+  disabledRuntimeFeatures?: FunctionsRuntimeFeatures;
 }
 
 interface RequestWithRawBody extends express.Request {
@@ -192,15 +194,30 @@ export class FunctionsEmulator implements EmulatorInstance {
           socketPath: runtime.metadata.socketPath,
         },
         (runtimeRes: http.IncomingMessage) => {
+          function forwardStatusAndHeaders(): void {
+            res.status(runtimeRes.statusCode || 200);
+            if (!res.headersSent) {
+              Object.keys(runtimeRes.headers).forEach((key) => {
+                const val = runtimeRes.headers[key];
+                if (val) {
+                  res.setHeader(key, val);
+                }
+              });
+            }
+          }
+
           runtimeRes.on("data", (buf) => {
+            forwardStatusAndHeaders();
             res.write(buf);
           });
 
           runtimeRes.on("close", () => {
+            forwardStatusAndHeaders();
             res.end();
           });
 
           runtimeRes.on("end", () => {
+            forwardStatusAndHeaders();
             res.end();
           });
         }
@@ -245,6 +262,7 @@ export class FunctionsEmulator implements EmulatorInstance {
       cwd: this.functionsDir,
       triggerId: triggerName,
       projectId: this.projectId,
+      disabled_features: this.args.disabledRuntimeFeatures,
     };
 
     const wsDebugger = EmulatorRegistry.getWebSocketDebugger();
@@ -415,6 +433,7 @@ You can probably fix this by running "npm install ${
       projectId: this.projectId,
       triggerId: "",
       ports: {},
+      disabled_features: this.args.disabledRuntimeFeatures,
     };
 
     // TODO(abehaskins): Gracefully handle removal of deleted function definitions
@@ -560,7 +579,8 @@ export function InvokeRuntime(
   const emitter = new EventEmitter();
   const metadata: { [key: string]: any } = {};
   const runtimeArgs = [
-    path.join(__dirname, "functionsEmulatorRuntime.js"),
+    // "--no-warnings",
+    path.join(__dirname, "functionsEmulatorRuntime"),
     JSON.stringify(frb),
     opts.serializedTriggers || "",
   ];

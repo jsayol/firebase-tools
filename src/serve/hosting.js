@@ -87,7 +87,12 @@ function _start(options) {
   });
 }
 
+function _connect() {
+  return Promise.resolve();
+}
+
 module.exports = {
   start: _start,
+  connect: _connect,
   stop: _stop,
 };
