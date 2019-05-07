@@ -23,7 +23,7 @@ const CACHE_DIR =
 
 const EmulatorDetails: { [s in JavaEmulators]: JavaEmulatorDetails } = {
   database: {
-    name: "database",
+    name: Emulators.DATABASE,
     instance: null,
     stdout: null,
     cacheDir: CACHE_DIR,
@@ -34,7 +34,7 @@ const EmulatorDetails: { [s in JavaEmulators]: JavaEmulatorDetails } = {
     localPath: path.join(CACHE_DIR, "firebase-database-emulator-v3.5.0.jar"),
   },
   firestore: {
-    name: "firestore",
+    name: Emulators.FIRESTORE,
     instance: null,
     stdout: null,
     cacheDir: CACHE_DIR,
@@ -218,5 +218,6 @@ export async function start(targetName: JavaEmulators, args: any): Promise<void>
     return Promise.reject("emulator not found");
   }
 
+  logger.debug(`Starting emulator ${targetName} with args ${JSON.stringify(args)}`);
   return _runBinary(emulator, command);
 }

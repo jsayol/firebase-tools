@@ -1,5 +1,6 @@
 import * as javaEmulators from "../serve/javaEmulators";
-import { EmulatorInstance, Emulators } from "../emulator/types";
+import { EmulatorInfo, EmulatorInstance, Emulators } from "../emulator/types";
+import { Constants } from "./constants";
 
 interface DatabaseEmulatorArgs {
   port?: number;
@@ -14,10 +15,25 @@ export class DatabaseEmulator implements EmulatorInstance {
   }
 
   async connect(): Promise<void> {
-    return;
+    // The Database emulator has no "connect" phase.
+    return Promise.resolve();
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
     return javaEmulators.stop(Emulators.DATABASE);
+  }
+
+  getInfo(): EmulatorInfo {
+    const host = this.args.host || Constants.getDefaultHost(Emulators.DATABASE);
+    const port = this.args.port || Constants.getDefaultPort(Emulators.DATABASE);
+
+    return {
+      host,
+      port,
+    };
+  }
+
+  getName(): Emulators {
+    return Emulators.DATABASE;
   }
 }

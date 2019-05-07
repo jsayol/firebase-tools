@@ -1,19 +1,27 @@
+/*
+Please be careful when adding require/imports to this file, it is pulled into functionsEmulatorRuntime
+which is ran in a separate node process, so it is likely to have unintended side-effects for you.
+ */
 const wildcardRegex = new RegExp("{[^/{}]*}");
-export function _extractParamsFromPath(wildcardPath: string, snapshotPath: string): any {
-  if (!_isValidWildcardMatch(wildcardPath, snapshotPath)) {
+const wildcardKeyRegex = new RegExp("^{(.+)}$");
+
+export function extractParamsFromPath(
+  wildcardPath: string,
+  snapshotPath: string
+): { [key: string]: string } {
+  if (!isValidWildcardMatch(wildcardPath, snapshotPath)) {
     return {};
   }
 
-  const wildcardKeyRegex = /^{(.+)}$/;
-  const wildcardChunks = _trimSlashes(wildcardPath).split("/");
-  const snapshotChucks = _trimSlashes(snapshotPath).split("/");
+  const wildcardChunks = trimSlashes(wildcardPath).split("/");
+  const snapshotChunks = trimSlashes(snapshotPath).split("/");
   return wildcardChunks
-    .slice(-snapshotChucks.length)
+    .slice(-snapshotChunks.length)
     .reduce((params: { [key: string]: string }, chunk, index) => {
       const match = wildcardKeyRegex.exec(chunk);
       if (match) {
         const wildcardKey = match[1];
-        const potentialWildcardValue = snapshotChucks[index];
+        const potentialWildcardValue = snapshotChunks[index];
         if (!wildcardKeyRegex.exec(potentialWildcardValue)) {
           params[wildcardKey] = potentialWildcardValue;
         }
@@ -22,22 +30,26 @@ export function _extractParamsFromPath(wildcardPath: string, snapshotPath: strin
     }, {});
 }
 
-export function _isValidWildcardMatch(wildcardPath: string, snapshotPath: string): boolean {
-  const wildcardChunks = _trimSlashes(wildcardPath).split("/");
-  const snapshotChucks = _trimSlashes(snapshotPath).split("/");
+export function isValidWildcardMatch(wildcardPath: string, snapshotPath: string): boolean {
+  const wildcardChunks = trimSlashes(wildcardPath).split("/");
+  const snapshotChunks = trimSlashes(snapshotPath).split("/");
 
-  if (snapshotChucks.length > wildcardChunks.length) {
+  if (snapshotChunks.length > wildcardChunks.length) {
     return false;
   }
 
-  const mismatchedChunks = wildcardChunks.slice(-snapshotChucks.length).filter((chunk, index) => {
-    return !(wildcardRegex.exec(chunk) || chunk === snapshotChucks[index]);
+  const mismatchedChunks = wildcardChunks.slice(-snapshotChunks.length).filter((chunk, index) => {
+    return !(wildcardRegex.exec(chunk) || chunk === snapshotChunks[index]);
   });
 
-  return !mismatchedChunks.length;
+  return mismatchedChunks.length === 0;
 }
 
-export function _trimSlashes(str: string): string {
+export function trimSlashes(str: string): string {
+  // Removes slashes at the start of the string, end of the string,
+  // and any repeated slashes.
+  //
+  // Ex: trimSlashes("/a//b/") === "a/b"
   return str
     .split("/")
     .filter((c) => c)

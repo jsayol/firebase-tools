@@ -1,36 +1,31 @@
-"use strict";
-
 import * as url from "url";
 
 import { Address, Emulators } from "./types";
 
 const DEFAULT_PORTS: { [s in Emulators]: number } = {
-  database: 9000,
-  firestore: 8080,
-  functions: 8088,
   hosting: 5000,
+  functions: 5001,
+  firestore: 5002,
+  database: 5003,
 };
 
 const DEFAULT_HOST = "localhost";
 
-const NAMES: { [s in Emulators]: string } = {
-  database: "database",
-  firestore: "firestore",
-  functions: "functions",
-  hosting: "hosting",
-};
-
 export class Constants {
+  static getDefaultHost(emulator: Emulators): string {
+    return DEFAULT_HOST;
+  }
+
   static getDefaultPort(emulator: Emulators): number {
     return DEFAULT_PORTS[emulator];
   }
 
   static getHostKey(emulator: Emulators): string {
-    return `emulators.${NAMES[emulator]}.host`;
+    return `emulators.${emulator.toString()}.host`;
   }
 
   static getPortKey(emulator: Emulators): string {
-    return `emulators.${NAMES[emulator]}.port`;
+    return `emulators.${emulator.toString()}.port`;
   }
 
   static getAddress(emulator: Emulators, options: any): Address {

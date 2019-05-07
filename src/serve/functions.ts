@@ -1,18 +1,21 @@
-"use strict";
-
 import { FunctionsEmulator } from "../emulator/functionsEmulator";
+import { EmulatorServer } from "../emulator/emulatorServer";
 
+// TODO(samstern): It would be better to convert this to an EmulatorServer
+// but we don't have the "options" object until start() is called.
 module.exports = {
-  emulatorInstance: undefined,
+  emulatorServer: undefined,
 
-  start(options: any): Promise<void> {
-    this.emulatorInstance = new FunctionsEmulator(options, {});
-    return this.emulatorInstance.start();
+  async start(options: any): Promise<void> {
+    this.emulatorServer = new EmulatorServer(new FunctionsEmulator(options, {}));
+    await this.emulatorServer.start();
   },
-  stop(): Promise<void> {
-    return this.emulatorInstance.stop();
+
+  async stop(): Promise<void> {
+    await this.emulatorServer().stop();
   },
+
   get(): FunctionsEmulator {
-    return this.emulatorInstance;
+    return this.emulatorServer.get() as FunctionsEmulator;
   },
 };

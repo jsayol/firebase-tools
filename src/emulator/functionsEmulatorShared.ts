@@ -1,6 +1,6 @@
 import * as _ from "lodash";
 import * as logger from "../logger";
-import * as fft from "firebase-functions-test";
+import * as FirebaseFunctionsTest from "firebase-functions-test";
 import * as parseTriggers from "../parseTriggers";
 import * as utils from "../utils";
 import { WrappedFunction } from "firebase-functions-test/lib/main";
@@ -8,14 +8,39 @@ import { CloudFunction } from "firebase-functions";
 import * as os from "os";
 import * as path from "path";
 import * as express from "express";
+import * as fs from "fs";
 
 export interface EmulatedTriggerDefinition {
   entryPoint: string;
   name: string;
   timeout?: string | number; // Can be "3s" for some reason lol
+  regions?: string[];
   availableMemoryMb?: "128MB" | "256MB" | "512MB" | "1GB" | "2GB";
   httpsTrigger?: any;
   eventTrigger?: any;
+}
+
+export interface EmulatedTriggerMap {
+  [name: string]: EmulatedTrigger;
+}
+
+// This bundle gets passed from hub -> runtime as a CLI arg
+export interface FunctionsRuntimeBundle {
+  projectId: string;
+  proto?: any;
+  triggerId?: string;
+  ports: {
+    firestore?: number;
+  };
+  disabled_features?: FunctionsRuntimeFeatures;
+  cwd: string;
+}
+
+export interface FunctionsRuntimeFeatures {
+  functions_config_helper?: boolean;
+  network_filtering?: boolean;
+  timeout?: boolean;
+  memory_limiting?: boolean;
 }
 
 const memoryLookup = {
@@ -27,27 +52,18 @@ const memoryLookup = {
 };
 
 export class EmulatedTrigger {
-  static fromDirectory(definition: EmulatedTriggerDefinition, directory: string): EmulatedTrigger {
-    const emulatedTrigger = new EmulatedTrigger(definition);
-    emulatedTrigger.directory = directory;
-    return emulatedTrigger;
-  }
+  /*
+  Here we create a trigger from a single definition (data about what resources does this trigger on, etc) and
+  the actual module which contains multiple functions / definitions. We locate the one we need below using
+  definition.entryPoint
+   */
+  constructor(public definition: EmulatedTriggerDefinition, private module: any) {}
 
-  static fromModule(definition: EmulatedTriggerDefinition, module: any): EmulatedTrigger {
-    const emulatedTrigger = new EmulatedTrigger(definition);
-    emulatedTrigger.module = module;
-    return emulatedTrigger;
-  }
-
-  private directory: string | void = undefined;
-  private module: string | void = undefined;
-  constructor(public definition: EmulatedTriggerDefinition) {}
-
-  get memoryLimit(): number {
+  get memoryLimitBytes(): number {
     return memoryLookup[this.definition.availableMemoryMb || "128MB"] * 1024 * 1024;
   }
 
-  get timeout(): number {
+  get timeoutMs(): number {
     if (typeof this.definition.timeout === "number") {
       return this.definition.timeout * 1000;
     } else {
@@ -56,21 +72,15 @@ export class EmulatedTrigger {
   }
 
   getRawFunction(): CloudFunction<any> {
-    if (this.directory) {
-      const module = require(this.directory);
-      const newFunction = _.get(module, this.definition.entryPoint);
-      logger.debug(`[functions] Function "${this.definition.name}" will be invoked. Logs:`);
-      return newFunction;
-    } else if (this.module) {
-      return _.get(this.module, this.definition.entryPoint);
-    } else {
-      throw new Error(
-        "EmulatedTrigger has not been provided with a directory or a triggers object"
-      );
+    if (!this.module) {
+      throw new Error("EmulatedTrigger has not been provided a module.");
     }
+
+    const func = _.get(this.module, this.definition.entryPoint);
+    return func.__emulator_func || func;
   }
 
-  getWrappedFunction(): WrappedFunction {
+  getWrappedFunction(fft: typeof FirebaseFunctionsTest): WrappedFunction {
     return fft().wrap(this.getRawFunction());
   }
 }
@@ -79,19 +89,31 @@ export async function getTriggersFromDirectory(
   projectId: string,
   functionsDir: string,
   firebaseConfig: any
-): Promise<{ [name: string]: EmulatedTrigger }> {
-  let triggers;
+): Promise<EmulatedTriggerMap> {
+  let triggerDefinitions;
 
   try {
-    triggers = await parseTriggers(projectId, functionsDir, {}, JSON.stringify(firebaseConfig));
+    triggerDefinitions = await parseTriggers(
+      projectId,
+      functionsDir,
+      {},
+      JSON.stringify(firebaseConfig)
+    );
   } catch (e) {
     utils.logWarning(`Failed to load functions source code.`);
     logger.info(e.message);
     return {};
   }
 
-  return triggers.reduce((obj: { [triggerName: string]: any }, trigger: any) => {
-    obj[trigger.name] = EmulatedTrigger.fromDirectory(trigger, functionsDir);
+  return getEmulatedTriggersFromDefinitions(triggerDefinitions, functionsDir);
+}
+
+export function getEmulatedTriggersFromDefinitions(
+  definitions: EmulatedTriggerDefinition[],
+  module: any
+): EmulatedTriggerMap {
+  return definitions.reduce((obj: { [triggerName: string]: any }, definition: any) => {
+    obj[definition.name] = new EmulatedTrigger(definition, module);
     return obj;
   }, {});
 }
@@ -100,35 +122,48 @@ export function getTemporarySocketPath(pid: number): string {
   return path.join(os.tmpdir(), `firebase_emulator_invocation_${pid}.sock`);
 }
 
+export function getFunctionRegion(def: EmulatedTriggerDefinition): string {
+  if (def.regions && def.regions.length > 0) {
+    return def.regions[0];
+  }
+
+  return "us-central1";
+}
+
 export function waitForBody(req: express.Request): Promise<string> {
   let data = "";
-  return new Promise((res, rej) => {
+  return new Promise((resolve) => {
     req.on("data", (chunk: any) => {
       data += chunk;
     });
 
     req.on("end", () => {
-      res(data);
+      resolve(data);
     });
   });
 }
 
-// This bundle gets passed from hub -> runtime as a CLI arg
-export interface FunctionsRuntimeBundle {
-  mode: "HTTPS" | "BACKGROUND";
-  projectId: string;
-  proto?: any;
-  triggerId: any;
-  ports: {
-    firestore: number;
-  };
-  disabled_features?: FunctionsRuntimeFeatures;
-  cwd: string;
-}
+export function findModuleRoot(moduleName: string, filepath: string): string {
+  const hierarchy = filepath.split("/");
 
-export interface FunctionsRuntimeFeatures {
-  functions_config_helper?: boolean;
-  network_filtering?: boolean;
-  timeout?: boolean;
-  memory_limiting?: boolean;
+  for (let i = 0; i < hierarchy.length; i++) {
+    try {
+      let chunks = [];
+      if (i) {
+        chunks = hierarchy.slice(0, -i);
+      } else {
+        chunks = hierarchy;
+      }
+      const packagePath = path.join(chunks.join("/"), "package.json");
+      const serializedPackage = fs.readFileSync(packagePath).toString();
+      if (JSON.parse(serializedPackage).name === moduleName) {
+        return chunks.join("/");
+      }
+      break;
+    } catch (err) {
+      /**/
+    }
+  }
+
+  return "";
 }

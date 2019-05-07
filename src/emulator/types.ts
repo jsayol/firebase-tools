@@ -1,4 +1,3 @@
-/* tslint:disable:no-console */
 import { ChildProcess } from "child_process";
 import { WebSocketDebuggerConfig } from "./websocketDebugger";
 import { EmulatorRegistry } from "./registry";
@@ -10,14 +9,47 @@ export const enum Emulators {
   HOSTING = "hosting",
 }
 
+// TODO: Is there a way we can just allow iteration over the enum?
+export const ALL_EMULATORS = [
+  Emulators.FUNCTIONS,
+  Emulators.FIRESTORE,
+  Emulators.DATABASE,
+  Emulators.HOSTING,
+];
+
 export interface EmulatorInstance {
-  start(wsConfig?: WebSocketDebuggerConfig): Promise<void>; // Called to begin emulator process
-  connect(): Promise<void>; // Called once all sibling emulators are start()'d
-  stop(): Promise<void>; // Called to kill emulator process
+  /**
+   * Called to begin the emulator process.
+   *
+   * Note: you should almost always call EmulatorRegistry.start() instead of this method.
+   */
+  start(wsConfig?: WebSocketDebuggerConfig): Promise<void>;
+
+  /**
+   * Called to tell the emulator to connect to other running emulators.
+   * This must be called after start().
+   */
+  connect(): Promise<void>;
+
+  /**
+   * Called to stop the emulator process.
+   *
+   * Note: you should almost always call EmulatorRegistry.stop() instead of this method.
+   */
+  stop(): Promise<void>;
+
+  /**
+   * Get the information about the running instance needed by the registry;
+   */
+  getInfo(): EmulatorInfo;
+
+  /**
+   * Get the name of the corresponding service.
+   */
+  getName(): Emulators;
 }
 
 export interface EmulatorInfo {
-  instance: EmulatorInstance;
   host: string;
   port: number;
 }
@@ -46,14 +78,27 @@ export interface Address {
 export class EmulatorLog {
   static fromJSON(json: string): EmulatorLog {
     let parsedLog;
+    let isNotJSON = false;
     try {
       parsedLog = JSON.parse(json);
     } catch (err) {
+      isNotJSON = true;
+    }
+
+    parsedLog = parsedLog || {};
+
+    if (
+      isNotJSON ||
+      parsedLog.level === undefined ||
+      parsedLog.type === undefined ||
+      parsedLog.text === undefined
+    ) {
       parsedLog = {
-        level: "ERROR",
+        level: "USER",
         text: json,
       };
     }
+
     return new EmulatorLog(
       parsedLog.level,
       parsedLog.type,

@@ -1,5 +1,6 @@
 import serveHosting = require("../serve/hosting");
-import { EmulatorInstance } from "../emulator/types";
+import { EmulatorInfo, EmulatorInstance, Emulators } from "../emulator/types";
+import { Constants } from "./constants";
 
 interface HostingEmulatorArgs {
   options: any;
@@ -18,10 +19,25 @@ export class HostingEmulator implements EmulatorInstance {
   }
 
   async connect(): Promise<void> {
-    return;
+    // The hosting emulator has no "connect" phase.
+    return Promise.resolve();
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
     return serveHosting.stop();
+  }
+
+  getInfo(): EmulatorInfo {
+    const host = this.args.host || Constants.getDefaultHost(Emulators.HOSTING);
+    const port = this.args.port || Constants.getDefaultPort(Emulators.HOSTING);
+
+    return {
+      host,
+      port,
+    };
+  }
+
+  getName(): Emulators {
+    return Emulators.HOSTING;
   }
 }

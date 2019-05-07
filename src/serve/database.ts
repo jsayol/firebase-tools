@@ -1,5 +1,4 @@
-"use strict";
-
 import { DatabaseEmulator } from "../emulator/databaseEmulator";
+import { EmulatorServer } from "../emulator/emulatorServer";
 
-module.exports = new DatabaseEmulator({});
+module.exports = new EmulatorServer(new DatabaseEmulator({}));

@@ -1,47 +1,59 @@
-import { EmulatorInfo, EmulatorInstance, Emulators } from "./types";
+import { ALL_EMULATORS, EmulatorInstance, Emulators } from "./types";
+import * as FirebaseError from "../error";
 import { WebSocketDebugger } from "./websocketDebugger";
 
+/**
+ * Static registry for running emulators to discover each other.
+ *
+ * Note that this is global mutable state, but the state can only be modified
+ * through the start() and stop() methods which ensures correctness.
+ */
 export class EmulatorRegistry {
-  static setInfo(emulator: Emulators, info: EmulatorInfo): void {
-    this.INFO.set(emulator, info);
+  static async start(instance: EmulatorInstance): Promise<void> {
+    if (this.isRunning(instance.getName())) {
+      throw new FirebaseError(`Emulator ${instance.getName()} is already running!`, {});
+    }
+
+    await instance.start();
+    this.set(instance.getName(), instance);
   }
 
-  static clearInfo(emulator: Emulators): void {
-    this.INFO.delete(emulator);
+  static async stop(name: Emulators): Promise<void> {
+    const instance = this.get(name);
+    if (!instance) {
+      return;
+    }
+
+    await instance.stop();
+    this.clear(instance.getName());
+  }
+
+  static async stopAll(): Promise<void> {
+    for (const name of this.listRunning()) {
+      await this.stop(name);
+    }
   }
 
   static isRunning(emulator: Emulators): boolean {
-    const info = this.INFO.get(emulator);
-    return info !== undefined;
+    const instance = this.INSTANCES.get(emulator);
+    return instance !== undefined;
   }
 
   static listRunning(): Emulators[] {
-    const res: Emulators[] = [];
-    for (const name of this.ALL) {
-      if (this.isRunning(name)) {
-        res.push(name);
-      }
-    }
-
-    return res;
+    return ALL_EMULATORS.filter((name) => this.isRunning(name));
   }
 
-  static getInstance(emulator: Emulators): EmulatorInstance | undefined {
-    const info = this.INFO.get(emulator);
-    if (!info) {
+  static get(emulator: Emulators): EmulatorInstance | undefined {
+    return this.INSTANCES.get(emulator);
+  }
+
+  static getPort(emulator: Emulators): number | undefined {
+    const instance = this.INSTANCES.get(emulator);
+    if (!instance) {
       return undefined;
     }
 
-    return info.instance;
-  }
-
-  static getPort(emulator: Emulators): number {
-    const info = this.INFO.get(emulator);
-    if (!info) {
-      return -1;
-    }
-
-    return info.port;
+    return instance.getInfo().port;
   }
 
   static setWebSocketDebugger(wsDebugger: WebSocketDebugger): void {
@@ -56,9 +68,15 @@ export class EmulatorRegistry {
     return EmulatorRegistry.WS_DEBUGGER !== undefined;
   }
 
-  private static ALL = [Emulators.FUNCTIONS, Emulators.FIRESTORE, Emulators.DATABASE];
-
-  private static INFO: Map<Emulators, EmulatorInfo> = new Map();
+  private static INSTANCES: Map<Emulators, EmulatorInstance> = new Map();
 
   private static WS_DEBUGGER?: WebSocketDebugger;
+
+  private static set(emulator: Emulators, instance: EmulatorInstance): void {
+    this.INSTANCES.set(emulator, instance);
+  }
+
+  private static clear(emulator: Emulators): void {
+    this.INSTANCES.delete(emulator);
+  }
 }
